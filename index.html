@@ -400,6 +400,7 @@ dialog::backdrop { background: rgba(58,46,34,.55); }
 
 /* ---------- Added for the working dashboard ---------- */
 .signin { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 16px; }
+#signin-pass:not([hidden]) { display: flex; }
 .signin-card { width: min(420px, 100%); padding: 32px; display: flex; flex-direction: column; gap: 16px; align-items: flex-start; }
 .live-strip { display: flex; gap: 10px; align-items: center; padding: 12px 16px; border-radius: var(--radius-lg); background: var(--live-bg); color: var(--live-ink); font-size: 14px; }
 .live-strip a { color: #fff; font-weight: bold; }
@@ -464,15 +465,20 @@ kbd { display: inline-block; min-width: 20px; padding: 0 5px; border: 1px solid 
   <div class="card raised signin-card">
     <span class="brand-sub">Machino · Retail Payout</span>
     <h1 style="font-size:26px">Sign in</h1>
-    <p class="muted" style="margin:0;line-height:1.5">Use the admin Google account. Other accounts are refused.</p>
+    <p class="muted" style="margin:0;line-height:1.5" id="signin-step">Step 1 of 2: sign in with the admin Google account. Other accounts are refused.</p>
     <div id="signin-btn"></div>
+    <form id="signin-pass" hidden style="flex-direction:column;gap:10px;width:100%">
+      <label for="signin-password" class="label">Dashboard password</label>
+      <input class="input" type="password" id="signin-password" autocomplete="current-password" required>
+      <button type="submit" class="btn btn-primary" id="signin-go">Sign in</button>
+    </form>
     <p class="small" id="signin-msg" style="margin:0;color:var(--failed-ink)"></p>
   </div>
 </div>
 
 <div class="demo-banner" id="demo-banner" role="note" hidden><strong>DEMO</strong><span>Invented sample people and amounts. This is not real payroll and is not connected to Retail Payout 2026.</span></div>
 
-<div class="app">
+<div class="app" hidden>
   <aside class="sidebar">
     <div class="side-inner">
       <div class="brand">
@@ -635,7 +641,6 @@ kbd { display: inline-block; min-width: 20px; padding: 0 5px; border: 1px solid 
 
 <script src="config.js"></script>
 <script src="slip-match.js"></script>
-<script src="preview.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

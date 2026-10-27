@@ -9,14 +9,19 @@
    * save the backend returns the person as the sheet now shows them.
    *
    * Two ways to run:
-   *   config.js apiUrl set   → sign in with Google, talk to the backend.
-   *   config.js apiUrl empty → PREVIEW: invented data from preview.js,
+   *   config.js apiUrl set   → sign in (Google, then the dashboard
+   *                            password), then talk to the backend. No
+   *                            invented data is even loaded; if the backend
+   *                            cannot be reached, an error is shown.
+   *   config.js apiUrl empty → DEMO: invented data from preview.js,
    *                            nothing leaves this browser tab.
-   * Nothing is stored in the browser.
+   * Nothing is stored in the browser: the session key lives in this tab's
+   * memory only, so closing or reloading the tab means signing in again.
    * ===================================================================== */
   const CFG = window.DASHBOARD_CONFIG || {};
   const CONNECTED = !!CFG.apiUrl;
-  let idToken = null;
+  let session = null;      // the backend session key, memory only
+  let googleToken = null;  // between the two sign-in steps only
 
   function call(action, args) {
     if (!CONNECTED) {
@@ -27,50 +32,94 @@
     return fetch(CFG.apiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({ idToken, action, args: args || {} })
+      body: JSON.stringify({ session, action, args: args || {} })
     }).then((r) => {
       if (!r.ok) throw new Error('The dashboard server did not answer (' + r.status + ').');
       return r.json();
     }).then((body) => {
       if (!body.ok) {
         // signIn: the sign-in is no longer valid. reauth: a protected setting needs a fresh sign-in.
-        if (body.signIn || body.reauth) { idToken = null; showSignIn(body.message); }
+        if (body.signIn || body.reauth) { session = null; DATA = null; showSignIn(body.message); }
         throw new Error(body.message || 'Something went wrong.');
       }
       return body.result;
     });
   }
 
-  /* ---------- Sign-in (connected mode only) ---------- */
+  /* ---------- Sign-in (connected mode only): Google, then the password ---------- */
   const signInEl = document.getElementById('signin');
+  const passForm = document.getElementById('signin-pass');
+  const passInput = document.getElementById('signin-password');
+  function post(body) {
+    return fetch(CFG.apiUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body) })
+      .then((r) => { if (!r.ok) throw new Error('The dashboard server did not answer (' + r.status + ').'); return r.json(); });
+  }
   function showSignIn(message) {
+    googleToken = null;
     signInEl.hidden = false;
     document.querySelector('.app').hidden = true;
+    document.getElementById('view').innerHTML = '';   // nothing from an ended session stays on the page
+    document.getElementById('drawer').innerHTML = '';
+    passForm.hidden = true;
+    passInput.value = '';
+    document.getElementById('signin-step').textContent = 'Step 1 of 2: sign in with the admin Google account. Other accounts are refused.';
     document.getElementById('signin-msg').textContent = message || '';
     if (!window.google || !google.accounts) {
       const s = document.createElement('script');
       s.src = 'https://accounts.google.com/gsi/client';
       s.async = true;
       s.onload = () => showSignIn(message);
+      s.onerror = () => { document.getElementById('signin-msg').textContent = 'Google sign-in could not be loaded. Check the internet connection, then reload.'; };
       document.head.appendChild(s);
       return;
     }
     google.accounts.id.initialize({
       client_id: CFG.googleClientId,
       callback: (resp) => {
-        idToken = resp.credential;
-        signInEl.hidden = true;
-        document.querySelector('.app').hidden = false;
-        load(state.period, { full: true });
+        googleToken = resp.credential;
+        document.getElementById('signin-btn').innerHTML = '';
+        document.getElementById('signin-step').textContent = 'Step 2 of 2: enter the dashboard password.';
+        document.getElementById('signin-msg').textContent = '';
+        passForm.hidden = false;
+        passInput.focus();
       }
     });
     const btn = document.getElementById('signin-btn');
     btn.innerHTML = '';
     google.accounts.id.renderButton(btn, { theme: 'outline', size: 'large', text: 'signin_with' });
   }
+  passForm.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const go = document.getElementById('signin-go');
+    const password = passInput.value;
+    passInput.value = '';
+    go.disabled = true;
+    try {
+      const body = await post({ action: 'login', idToken: googleToken, password });
+      if (!body.ok) {
+        // A wrong password may be tried again with the same Google sign-in; anything else starts over.
+        if (/Wrong password/.test(body.message || '') && !body.locked) {
+          document.getElementById('signin-msg').textContent = body.message;
+          passInput.focus();
+        } else showSignIn(body.message);
+        return;
+      }
+      session = body.result.session;
+      googleToken = null;
+      signInEl.hidden = true;
+      document.querySelector('.app').hidden = false;
+      load(state.period, { full: true });
+    } catch (err) {
+      document.getElementById('signin-msg').textContent = 'Could not reach the dashboard server: ' + errText(err);
+    } finally {
+      go.disabled = false;
+    }
+  });
   function signOut() {
-    idToken = null;
+    const ending = session;
+    session = null;
     DATA = null;
+    if (ending) post({ action: 'logout', session: ending }).catch(() => {});
     if (window.google && google.accounts) google.accounts.id.disableAutoSelect();
     showSignIn('You are signed out.');
   }
@@ -1130,7 +1179,7 @@
   let lastFocus = null;
   let drawerEnter = false;
   function renderDrawer(opts) {
-    const e = state.openId && emp(state.openId);
+    const e = !(CONNECTED && !session) && state.openId && emp(state.openId);
     if (!e) { drawerEl.innerHTML = ''; document.body.classList.remove('no-scroll'); return; }
     const body = document.getElementById('drawer-body');
     const scroll = body ? body.scrollTop : 0;
@@ -1216,7 +1265,7 @@
   /* ---------- Profile menu ---------- */
   const profileEl = document.getElementById('profile');
   function renderProfile() {
-    if (!DATA) { profileEl.innerHTML = ''; return; }
+    if (!DATA || (CONNECTED && !session)) { profileEl.innerHTML = ''; return; }
     const a = DATA.account;
     profileEl.innerHTML = `
       ${state.menu ? `<div class="menu" id="profile-menu">
@@ -1251,6 +1300,7 @@
     return ROUTES[r] ? r : 'overview';
   }
   function render(opts) {
+    if (CONNECTED && !session) { view.innerHTML = ''; return; }   // signed out: draw nothing
     if (state.loading) { view.innerHTML = '<div class="loading"><span class="spinner" aria-hidden="true"></span>Loading payroll information…</div>'; return; }
     if (!DATA) {
       view.innerHTML = `<div class="card card-body empty"><h3>Could not load the payroll information</h3><span class="muted small">${esc(state.loadError || '')}</span><button type="button" class="btn btn-primary" data-action="retry">Try again</button></div>`;
@@ -1570,12 +1620,17 @@
   // Hook for the self-test (selftest.js). Harmless: it exposes only this tab's memory.
   window.__payout = { state, get data() { return DATA; }, render, renderDrawer, load };
 
-  if (/[?&]selftest=1/.test(location.search) && !CONNECTED) {
-    const s = document.createElement('script');
-    s.src = 'selftest.js';
-    document.body.appendChild(s);
+  const addScript = (src, onload) => { const s = document.createElement('script'); s.src = src; if (onload) s.onload = onload; document.body.appendChild(s); };
+  if (CONNECTED) {
+    // Real payroll: the sign-in screen only. Nothing is fetched until both checks pass.
+    showSignIn('');
+  } else {
+    // DEMO: the invented data is loaded only here.
+    document.getElementById('demo-banner').hidden = false;
+    document.querySelector('.app').hidden = false;
+    addScript('preview.js', () => {
+      if (/[?&]selftest=1/.test(location.search)) addScript('selftest.js');
+      load(null, { full: true });
+    });
   }
-  if (!CONNECTED) document.getElementById('demo-banner').hidden = false;
-  if (CONNECTED && !idToken) showSignIn('');
-  else load(null, { full: true });
 })();
