@@ -465,9 +465,8 @@ kbd { display: inline-block; min-width: 20px; padding: 0 5px; border: 1px solid 
   <div class="card raised signin-card">
     <span class="brand-sub">Machino · Retail Payout</span>
     <h1 style="font-size:26px">Sign in</h1>
-    <p class="muted" style="margin:0;line-height:1.5" id="signin-step">Step 1 of 2: sign in with the admin Google account. Other accounts are refused.</p>
-    <div id="signin-btn"></div>
-    <form id="signin-pass" hidden style="flex-direction:column;gap:10px;width:100%">
+    <p class="muted" style="margin:0;line-height:1.5">Enter the dashboard password. Five wrong tries lock sign-in for 15 minutes.</p>
+    <form id="signin-pass" style="display:flex;flex-direction:column;gap:10px;width:100%">
       <label for="signin-password" class="label">Dashboard password</label>
       <input class="input" type="password" id="signin-password" autocomplete="current-password" required>
       <button type="submit" class="btn btn-primary" id="signin-go">Sign in</button>

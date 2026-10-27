@@ -9,8 +9,8 @@
    * save the backend returns the person as the sheet now shows them.
    *
    * Two ways to run:
-   *   config.js apiUrl set   → sign in (Google, then the dashboard
-   *                            password), then talk to the backend. No
+   *   config.js apiUrl set   → sign in with the dashboard password,
+   *                            then talk to the backend. No
    *                            invented data is even loaded; if the backend
    *                            cannot be reached, an error is shown.
    *   config.js apiUrl empty → DEMO: invented data from preview.js,
@@ -21,7 +21,6 @@
   const CFG = window.DASHBOARD_CONFIG || {};
   const CONNECTED = !!CFG.apiUrl;
   let session = null;      // the backend session key, memory only
-  let googleToken = null;  // between the two sign-in steps only
 
   function call(action, args) {
     if (!CONNECTED) {
@@ -46,7 +45,7 @@
     });
   }
 
-  /* ---------- Sign-in (connected mode only): Google, then the password ---------- */
+  /* ---------- Sign-in (connected mode only): the dashboard password ---------- */
   const signInEl = document.getElementById('signin');
   const passForm = document.getElementById('signin-pass');
   const passInput = document.getElementById('signin-password');
@@ -55,38 +54,13 @@
       .then((r) => { if (!r.ok) throw new Error('The dashboard server did not answer (' + r.status + ').'); return r.json(); });
   }
   function showSignIn(message) {
-    googleToken = null;
     signInEl.hidden = false;
     document.querySelector('.app').hidden = true;
     document.getElementById('view').innerHTML = '';   // nothing from an ended session stays on the page
     document.getElementById('drawer').innerHTML = '';
-    passForm.hidden = true;
     passInput.value = '';
-    document.getElementById('signin-step').textContent = 'Step 1 of 2: sign in with the admin Google account. Other accounts are refused.';
     document.getElementById('signin-msg').textContent = message || '';
-    if (!window.google || !google.accounts) {
-      const s = document.createElement('script');
-      s.src = 'https://accounts.google.com/gsi/client';
-      s.async = true;
-      s.onload = () => showSignIn(message);
-      s.onerror = () => { document.getElementById('signin-msg').textContent = 'Google sign-in could not be loaded. Check the internet connection, then reload.'; };
-      document.head.appendChild(s);
-      return;
-    }
-    google.accounts.id.initialize({
-      client_id: CFG.googleClientId,
-      callback: (resp) => {
-        googleToken = resp.credential;
-        document.getElementById('signin-btn').innerHTML = '';
-        document.getElementById('signin-step').textContent = 'Step 2 of 2: enter the dashboard password.';
-        document.getElementById('signin-msg').textContent = '';
-        passForm.hidden = false;
-        passInput.focus();
-      }
-    });
-    const btn = document.getElementById('signin-btn');
-    btn.innerHTML = '';
-    google.accounts.id.renderButton(btn, { theme: 'outline', size: 'large', text: 'signin_with' });
+    passInput.focus();
   }
   passForm.addEventListener('submit', async (ev) => {
     ev.preventDefault();
@@ -95,17 +69,13 @@
     passInput.value = '';
     go.disabled = true;
     try {
-      const body = await post({ action: 'login', idToken: googleToken, password });
+      const body = await post({ action: 'login', password });
       if (!body.ok) {
-        // A wrong password may be tried again with the same Google sign-in; anything else starts over.
-        if (/Wrong password/.test(body.message || '') && !body.locked) {
-          document.getElementById('signin-msg').textContent = body.message;
-          passInput.focus();
-        } else showSignIn(body.message);
+        document.getElementById('signin-msg').textContent = body.message;
+        passInput.focus();
         return;
       }
       session = body.result.session;
-      googleToken = null;
       signInEl.hidden = true;
       document.querySelector('.app').hidden = false;
       load(state.period, { full: true });
@@ -120,7 +90,6 @@
     session = null;
     DATA = null;
     if (ending) post({ action: 'logout', session: ending }).catch(() => {});
-    if (window.google && google.accounts) google.accounts.id.disableAutoSelect();
     showSignIn('You are signed out.');
   }
 
