@@ -176,6 +176,21 @@ h1, h2, h3 { font-family: var(--font-display); font-weight: normal; margin: 0; }
 .empty { padding: 40px var(--space-6); text-align: center; display: flex; flex-direction: column; gap: var(--space-2); align-items: center; }
 .empty h3 { font-size: var(--text-lg); }
 .loading { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-8); color: var(--ink-soft); }
+/* The first load: what is happening, how long it has taken, and placeholders where the page will appear. */
+.loading-card { max-width: 560px; margin: var(--space-8) auto var(--space-6); padding: var(--space-6); display: grid; gap: var(--space-3); }
+.loading-head { display: flex; align-items: center; gap: var(--space-3); font-weight: 600; color: var(--ink); }
+.loading-hint { color: var(--ink-soft); font-size: 14px; min-height: 1.5em; }
+.loading-time { color: var(--ink-soft); font-size: 13px; font-variant-numeric: tabular-nums; }
+.progress, .busy-bar { overflow: hidden; }
+.progress { position: relative; height: 6px; border-radius: var(--radius-pill); background: var(--line); }
+.progress::after, .busy-bar::after { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 40%; border-radius: inherit; background: var(--brown); animation: sweep 1.4s ease-in-out infinite; }
+@keyframes sweep { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+/* A thin bar across the top while the page waits for the server (saving, refreshing, sending). */
+.busy-bar { position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 200; background: var(--brown-tint); }
+.skeletons { max-width: 1100px; margin: 0 auto; display: grid; gap: var(--space-4); }
+.skeleton { height: 88px; border-radius: var(--radius-lg); background: linear-gradient(90deg, var(--line-soft) 25%, var(--paper-warm) 50%, var(--line-soft) 75%); background-size: 200% 100%; animation: shimmer 1.6s linear infinite; }
+.skeleton.tall { height: 220px; }
+@keyframes shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
 .spinner { width: 20px; height: 20px; border: 2px solid var(--line); border-top-color: var(--brown); border-radius: 50%; animation: spin .8s linear infinite; flex: none; }
 .spinner.sm { width: 14px; height: 14px; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -358,6 +373,11 @@ dialog::backdrop { background: rgba(58,46,34,.55); }
 .demo-banner.real { background: #1F4D3A; }
 .email-frame { width: 100%; height: min(560px, 60vh); border: 1px solid var(--line, #E5DED3); border-radius: 8px; background: #fff; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; } }
+/* Progress must still move when Windows "Animation effects" is off (owner, 2026-10-27: "the loading is not moving"). Slower, but moving. */
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: spin 1.6s linear infinite !important; }
+  .progress::after, .busy-bar::after { animation: sweep 2.4s ease-in-out infinite !important; }
+}
 
 @media (max-width: 1000px) {
   .progress { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 14px; }
@@ -466,6 +486,7 @@ kbd { display: inline-block; min-width: 20px; padding: 0 5px; border: 1px solid 
 </style>
 </head>
 <body>
+<div class="busy-bar" id="busy-bar" role="progressbar" aria-label="Working" hidden></div>
 
 <div class="signin" id="signin" hidden>
   <div class="card raised signin-card">
@@ -667,8 +688,8 @@ kbd { display: inline-block; min-width: 20px; padding: 0 5px; border: 1px solid 
   </div>
 </dialog>
 
-<script src="config.js?v=da3311e"></script>
-<script src="slip-match.js?v=da3311e"></script>
-<script src="app.js?v=da3311e"></script>
+<script src="config.js?v=6c279c3"></script>
+<script src="slip-match.js?v=6c279c3"></script>
+<script src="app.js?v=6c279c3"></script>
 </body>
 </html>

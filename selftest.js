@@ -339,7 +339,13 @@
       P.data.employees.filter((e) => e.status === 'Ready' && e.verified && !e.issue).length === 0, 6000));
     $('#confirm-dialog').close();
     window.DashboardPreview.setTestMode({ on: true });
-    await P.load('October 2026', { full: true });
+    const reload = P.load('October 2026', { full: true });
+    // Owner, 2026-10-27: "the loading is not moving… add loading so the user understands".
+    check('a full load shows a moving bar, what is happening and the seconds so far',
+      !!$('.loading-card .progress') && /Connecting/.test($('#loading-hint').textContent) && /\d+ s/.test($('#loading-time').textContent) && $$('.skeleton').length === 3);
+    check('the top bar shows while the server is asked', !$('#busy-bar').hidden);
+    await reload;
+    check('… and both go away when the data arrives', !$('.loading-card') && await until(() => $('#busy-bar').hidden));
 
     // 10. History and month switch
     check('history opens', await go('#history', 'History'));

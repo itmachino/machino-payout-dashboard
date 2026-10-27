@@ -28,7 +28,33 @@
   const recalled = () => { try { return localStorage.getItem(SESSION_KEY); } catch (e) { return null; } };
   let session = CONNECTED ? recalled() : null;
 
+  /* ---------- Busy: a bar across the top while any request is waiting for the server ---------- */
+  let pending = 0;
+  function busy(promise) {
+    pending++;
+    document.getElementById('busy-bar').hidden = false;
+    const done = () => { pending = Math.max(0, pending - 1); if (!pending) document.getElementById('busy-bar').hidden = true; };
+    promise.then(done, done);
+    return promise;
+  }
+  /** "12 s" or "1 min 5 s", for the waiting messages. */
+  const secondsSince = (t0) => { const s = Math.floor((Date.now() - t0) / 1000); return s < 60 ? s + ' s' : Math.floor(s / 60) + ' min ' + (s % 60) + ' s'; };
+  // What the server does on a full load, in the order it usually spends the time. The
+  // hints follow the clock, not real progress: the server sends one answer at the end.
+  const LOAD_HINTS = [
+    [0, 'Connecting to the payroll server…'],
+    [2, 'Opening Retail Payout 2026 and reading this month’s tab…'],
+    [5, 'Checking the Staff Directory and Payout Control…'],
+    [8, 'Looking for payment slips and PDFs in Google Drive…'],
+    [12, 'Checking Jibble for people not linked yet…'],
+    [18, 'Still working. Google is slow right now, so please keep this page open.']
+  ];
+  const loadHint = (t0) => { const s = (Date.now() - t0) / 1000; return LOAD_HINTS.filter((h) => s >= h[0]).pop()[1]; };
+
   function call(action, args) {
+    return busy(callNow(action, args));
+  }
+  function callNow(action, args) {
     if (!CONNECTED) {
       return new Promise((resolve, reject) => setTimeout(() => {
         try { resolve(window.DashboardPreview[action](args || {})); } catch (e) { reject(e); }
@@ -56,8 +82,8 @@
   const passForm = document.getElementById('signin-pass');
   const passInput = document.getElementById('signin-password');
   function post(body) {
-    return fetch(CFG.apiUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body) })
-      .then((r) => { if (!r.ok) throw new Error('The dashboard server did not answer (' + r.status + ').'); return r.json(); });
+    return busy(fetch(CFG.apiUrl, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(body) })
+      .then((r) => { if (!r.ok) throw new Error('The dashboard server did not answer (' + r.status + ').'); return r.json(); }));
   }
   function showSignIn(message) {
     signInEl.hidden = false;
@@ -76,10 +102,17 @@
     go.disabled = true;
     go.innerHTML = '<span class="spinner sm" aria-hidden="true"></span>Signing in…';
     document.getElementById('signin-msg').textContent = '';
+    // Signing in also loads the first screen, so it can take a while: say what is happening.
+    const t0 = Date.now();
+    const tick = setInterval(() => {
+      go.innerHTML = '<span class="spinner sm" aria-hidden="true"></span>Signing in… ' + secondsSince(t0);
+      document.getElementById('signin-msg').textContent = Date.now() - t0 > 1500 ? 'Checking the password and loading the payroll. ' + loadHint(t0) : '';
+    }, 500);
     try {
       // The first screen's data comes back with the sign-in, in the same trip.
       const body = await post({ action: 'login', password, load: { period: state.period || null } });
       if (!body.ok) {
+        clearInterval(tick);
         document.getElementById('signin-msg').textContent = body.message;
         passInput.focus();
         return;
@@ -92,6 +125,7 @@
     } catch (err) {
       document.getElementById('signin-msg').textContent = 'Could not reach the dashboard server: ' + errText(err);
     } finally {
+      clearInterval(tick);
       go.disabled = false;
       go.textContent = 'Sign in';
     }
@@ -186,6 +220,7 @@
   async function load(period, opts) {
     opts = opts || {};
     state.loading = !DATA || opts.full;
+    state.loadStarted = Date.now();
     state.loadError = null;
     if (state.loading) render(); else setRefreshing(true);
     try {
@@ -1647,10 +1682,33 @@
     clearTimeout(renderTimer);
     renderTimer = setTimeout(() => render(), 180);
   }
+  /** The first load: a moving bar, what the server is doing, the seconds so far, and placeholders. */
+  let loadingTicker = null;
+  function showLoading() {
+    const t0 = state.loadStarted || Date.now();
+    view.innerHTML = `
+      <section class="card loading-card" role="status" aria-live="polite">
+        <div class="loading-head"><span class="spinner" aria-hidden="true"></span>Loading payroll information</div>
+        <div class="progress" aria-hidden="true"></div>
+        <div class="loading-hint" id="loading-hint">${esc(loadHint(t0))}</div>
+        <div class="loading-time" id="loading-time">${secondsSince(t0)} · usually 5 to 15 seconds</div>
+      </section>
+      <div class="skeletons" aria-hidden="true"><div class="skeleton"></div><div class="skeleton tall"></div><div class="skeleton"></div></div>`;
+    if (loadingTicker) return;
+    loadingTicker = setInterval(() => {
+      const hint = document.getElementById('loading-hint');
+      if (!state.loading || !hint) { stopLoadingTicker(); return; }
+      const h = loadHint(state.loadStarted);
+      if (hint.textContent !== h) hint.textContent = h;
+      document.getElementById('loading-time').textContent = secondsSince(state.loadStarted) + ' · usually 5 to 15 seconds';
+    }, 500);
+  }
+  function stopLoadingTicker() { clearInterval(loadingTicker); loadingTicker = null; }
   function render(opts) {
     clearTimeout(renderTimer);
     if (CONNECTED && !session) { view.innerHTML = ''; return; }   // signed out: draw nothing
-    if (state.loading) { view.innerHTML = '<div class="loading"><span class="spinner" aria-hidden="true"></span>Loading payroll information…</div>'; return; }
+    if (state.loading) { showLoading(); return; }
+    stopLoadingTicker();
     if (!DATA) {
       view.innerHTML = `<div class="card card-body empty"><h3>Could not load the payroll information</h3><span class="muted small">${esc(state.loadError || '')}</span><button type="button" class="btn btn-primary" data-action="retry">Try again</button></div>`;
       return;
