@@ -233,15 +233,109 @@
     input($('#staff-q'), '');
     await sleep(250);
 
-    // 9. Send Center keeps LIVE in the spreadsheet
+    // 8c. Add and delete people
+    $('[data-action="staff-add"]').click();
+    check('add opens an empty form with an Employee ID box', await until(() => $('#staff-dialog').open && $('#sf-id') && $('#sf-id').value === ''));
+    $('#sf-id').value = 'MCH-024'; $('#sf-name').value = 'Someone New';
+    $('#staff-save').click();
+    check('an Employee ID already in use is refused', await until(() => !$('#staff-error').hidden && /already in the Staff Directory/.test($('#staff-error').textContent)));
+    $('#sf-id').value = 'MCH-040';
+    $('#sf-store').value = 'SS18';
+    $('#staff-save').click();
+    check('a new person is added and listed', await until(() => !$('#staff-dialog').open && P.data.staff.some((s) => s.id === 'MCH-040')));
+    $('[data-staff-edit="MCH-001"]').click();
+    await until(() => $('#staff-dialog').open);
+    $('#staff-delete').click();
+    await until(() => $('#confirm-dialog').open);
+    input($('#confirm-word'), 'DELETE');
+    $('#confirm-go').click();
+    check('someone on this month\'s payroll cannot be deleted', await until(() => /cannot be deleted now/.test($('#view').textContent)) && P.data.staff.some((s) => s.id === 'MCH-001'));
+    $('[data-staff-edit="MCH-040"]').click();
+    await until(() => $('#staff-dialog').open);
+    $('#staff-delete').click();
+    await until(() => $('#confirm-dialog').open);
+    $('#confirm-go').click();
+    check('delete needs the word DELETE', await until(() => /DELETE was not typed/.test($('#view').textContent)) && P.data.staff.some((s) => s.id === 'MCH-040'));
+    $('[data-staff-edit="MCH-040"]').click();
+    await until(() => $('#staff-dialog').open);
+    $('#staff-delete').click();
+    await until(() => $('#confirm-dialog').open);
+    input($('#confirm-word'), 'DELETE');
+    $('#confirm-go').click();
+    check('a person not on the payroll is deleted', await until(() => !P.data.staff.some((s) => s.id === 'MCH-040')), (P.state.toast && P.state.toast.text) + ' | word=' + ($('#confirm-word') && $('#confirm-word').value));
+
+    // 8d. Slips already in Drive: see them all, rename to the standard name
+    check('Payment Slips opens', await go('#slips', 'Payment Slips'));
+    $('[data-action="drive-load"]').click();
+    check('every file in the folder is listed with an Open link', await until(() => P.state.slips.drive && P.state.slips.drive.rows &&
+      $$('#view a.fname').length === P.state.slips.drive.rows.length && P.state.slips.drive.rows.length >= 8));
+    check('a messy name is offered for renaming', /Arjun - payslip Oct\.pdf/.test($('#view').textContent) && $$('[data-drive-choose]').length === 1,
+      P.state.slips.drive.rows.map((r) => r.name + '=' + r.state + (r.reason ? ' (' + r.reason + ')' : '')).join(' | '));
+    check('a file nobody matches asks for the person', !!$('[data-drive-pick]'));
+    change($('[data-drive-pick]'), 'MCH-028');
+    check('picking the person offers it for renaming too', await until(() => $$('[data-drive-choose]').length === 2));
+    $('[data-action="drive-rename"]').click();
+    check('renaming asks first, showing old → new', await until(() => $('#confirm-dialog').open && /→/.test($('#confirm-body').textContent)));
+    $('#confirm-go').click();
+    check('renamed: the files now have the standard names', await until(() => $$('[data-drive-choose]').length === 0 && /IOI Arjun al Pillai - Retail Wages and Commission for October 2026 Payment Slip\.pdf/.test($('#view').textContent)));
+
+    // 8e. Start a month
+    check('Jibble page opens again', await go('#checks', 'Jibble & Documents'));
+    check('the next month is offered', $('#ms-month').value === '2026-11' && /Set up November 2026/.test($('[data-action="month-setup"]').textContent));
+    $('[data-action="month-setup"]').click();
+    check('setting up a month asks first', await until(() => $('#confirm-dialog').open && /November 2026/.test($('#confirm-body').textContent)));
+    $('#confirm-go').click();
+    check('November 2026 is set up and opened', await until(() => P.data.period === 'November 2026' && P.data.periods.includes('November 2026') && !P.state.loading, 6000));
+    await until(() => $('#confirm-dialog').open);
+    $('#confirm-dialog').close();
+    check('filling November again needs "replace"', await go('#checks', 'Jibble & Documents') && (change($('#ms-month'), '2026-11'), await until(() => !!$('#ms-replace'))));
+
+    // 8f. Tools: the spreadsheet's menus
+    check('Tools opens', await go('#tools', 'Tools'));
+    check('every menu item is listed', ['Check System', '1. Prepare Payout', '2. Review Payouts', '3. Test Payout Email', '4. Pre-Send Check',
+      '5. Send Ready Employees', 'Setup & Repair', 'Delete a month tab'].every((x) => $('#view').textContent.includes(x)));
+    $('[data-action="tool-check"]').click();
+    check('Check System runs and shows its findings', await until(() => /Ready to prepare/.test($('#view').textContent)));
+    $('[data-action="tool-ids"]').click();
+    check('the Employee-ID fill is shown first, nothing written', await until(() => $('[data-id-fill="12"]') && /Rina Kaur/.test($('#view').textContent)));
+    change($('#dm-month'), 'November 2026');
+    $('[data-action="tool-delete-month"]').click();
+    await until(() => $('#confirm-dialog').open);
+    input($('#confirm-word'), 'November');
+    $('#confirm-go').click();
+    check('a month tab is not deleted without its exact name', await until(() => /Type the tab/.test($('#view').textContent)) && P.data.periods.includes('November 2026'));
+    $('[data-action="tool-delete-month"]').click();
+    await until(() => $('#confirm-dialog').open);
+    input($('#confirm-word'), 'November 2026');
+    $('#confirm-go').click();
+    check('a Jibble-made month with nobody Paid is deleted', await until(() => !P.data.periods.includes('November 2026') && !P.state.loading, 6000));
+
+    // 9. Send Center: 3. Test Payout Email and 5. Send Ready Employees (owner, 2026-10-27)
+    window.DashboardPreview.saveConfiguration({ changes: { 'Current Payout Month': 'October', 'Current Payout Year': '2026' } });
+    await P.load('October 2026', { full: true });
     check('send center opens', await go('#send', 'Send Center'));
-    check('no LIVE send button on the page', !$('#view .btn-live'));
-    $('[data-action="live-preview"]').click();
-    await until(() => $('#live-dialog').open);
-    input($('#live-confirm'), 'SEND ' + P.data.preSend.will.length);
+    check('both send buttons are on the page', !!$('[data-action="send-test"]') && !!$('[data-action="send-live"]'));
+    $('[data-action="send-test"]').click();
+    check('test emails: the list and the test inbox are shown first', await until(() => $('#confirm-dialog').open && /test inbox/.test($('#confirm-body').textContent)));
+    $('#confirm-go').click();
+    check('test emails: the result is shown', await until(() => $('#confirm-dialog').open && /Test emails done/.test($('#confirm-title').textContent)));
+    $('#confirm-dialog').close();
+    window.DashboardPreview.setTestMode({ on: false, confirm: 'LIVE' });
+    await P.load('October 2026', { full: true });
+    await go('#send', 'Send Center');
+    const readyBefore = P.data.employees.filter((e) => e.status === 'Ready' && e.verified && !e.issue).length;
+    $('[data-action="send-live"]').click();
+    check('LIVE: the red confirmation opens with the recipients', await until(() => $('#live-dialog').open && $$('#live-list li').length === readyBefore));
+    input($('#live-confirm'), 'SEND');
+    check('LIVE: the button stays off until SEND <number> is typed', $('#live-send').disabled);
+    input($('#live-confirm'), 'SEND ' + readyBefore);
+    check('LIVE: typing SEND <number> enables it', !$('#live-send').disabled);
     $('#live-send').click();
-    check('LIVE confirmation is a preview only', !$('#live-note').hidden);
-    $('#live-dialog').close();
+    check('LIVE: sent, and those people are now Sent', await until(() => $('#confirm-dialog').open && /Sending done/.test($('#confirm-title').textContent) &&
+      P.data.employees.filter((e) => e.status === 'Ready' && e.verified && !e.issue).length === 0, 6000));
+    $('#confirm-dialog').close();
+    window.DashboardPreview.setTestMode({ on: true });
+    await P.load('October 2026', { full: true });
 
     // 10. History and month switch
     check('history opens', await go('#history', 'History'));

@@ -74,8 +74,11 @@
     const password = passInput.value;
     passInput.value = '';
     go.disabled = true;
+    go.innerHTML = '<span class="spinner sm" aria-hidden="true"></span>Signing in…';
+    document.getElementById('signin-msg').textContent = '';
     try {
-      const body = await post({ action: 'login', password });
+      // The first screen's data comes back with the sign-in, in the same trip.
+      const body = await post({ action: 'login', password, load: { period: state.period || null } });
       if (!body.ok) {
         document.getElementById('signin-msg').textContent = body.message;
         passInput.focus();
@@ -85,11 +88,12 @@
       remember(session);
       signInEl.hidden = true;
       document.querySelector('.app').hidden = false;
-      load(state.period, { full: true });
+      load(state.period, { full: true, data: body.result.data, loadError: body.result.loadError });
     } catch (err) {
       document.getElementById('signin-msg').textContent = 'Could not reach the dashboard server: ' + errText(err);
     } finally {
       go.disabled = false;
+      go.textContent = 'Sign in';
     }
   });
   function signOut() {
@@ -112,6 +116,7 @@
     branch: 'both',
     history: { q: '', period: 'all', mode: 'all' },
     staff: { q: '', show: 'active', editId: null },
+    tools: { check: null, checking: false, ids: null, idsLoading: false, idChosen: {}, delMonth: null },
     slips: { files: [], plan: null, planning: false, saving: false, result: null, error: null },
     links: {},
     cfg: { editing: false, draft: null, saving: false },
@@ -131,6 +136,8 @@
     ? '<a class="badge b-test mode-pill" href="#settings" title="Change in Settings">TEST MODE</a>'
     : '';
   const money = (v) => v == null ? '<span class="blank">Blank</span>' : esc(v);
+  // Someone with no Employee ID in the sheet is keyed "name:…" inside; show that plainly.
+  const idText = (id) => /^name:/.test(String(id)) ? '<span class="blank">No Employee ID</span>' : esc(id);
   const dash = (v) => v == null || v === '' ? '—' : esc(v);
   const plain = (v) => v == null ? '' : String(v).replace(/[^0-9.]/g, '');
   const amt = (v) => v == null ? -1 : Number(String(v).replace(/[^0-9.]/g, ''));
@@ -182,7 +189,9 @@
     state.loadError = null;
     if (state.loading) render(); else setRefreshing(true);
     try {
-      const d = await call('getDashboardData', { period: period || null });
+      // opts.data: already fetched together with the sign-in (one trip instead of two).
+      if (opts.loadError) throw new Error(opts.loadError);
+      const d = opts.data || await call('getDashboardData', { period: period || null });
       DATA = d;
       showMode();
       state.period = d.period;
@@ -432,7 +441,7 @@
             </tr></thead>
             <tbody>${rows.map((e) => `
               <tr data-open="${esc(e.id)}" class="${e.id === state.openId ? 'selected' : ''}">
-                <th scope="row"><div class="name-cell"><span class="avatar sm soft" aria-hidden="true">${esc(initials(e.name))}</span><div><button type="button" class="name-btn" data-open="${esc(e.id)}">${esc(e.name)}</button><div class="small muted">${esc(e.id)}</div></div></div></th>
+                <th scope="row"><div class="name-cell"><span class="avatar sm soft" aria-hidden="true">${esc(initials(e.name))}</span><div><button type="button" class="name-btn" data-open="${esc(e.id)}">${esc(e.name)}</button><div class="small muted">${idText(e.id)}</div></div></div></th>
                 <td><span class="tags">${storeBadges(e.stores)}</span></td>
                 <td class="right num">${esc(e.hours)}</td>
                 <td class="right num">${money(e.wages)}</td>
@@ -510,6 +519,7 @@
           ${result.skipped.length ? `<span>${result.skipped.length} not saved: ${result.skipped.map((s) => esc(s.name) + ' (' + esc(s.reason) + ')').join('; ')}</span>` : ''}
         </div><button type="button" class="link-btn" data-action="slips-dismiss">Dismiss</button></div>` : ''}
 
+      ${folderNotice()}
       <div class="${sl.files.length ? 'stack' : 'split'}">
         <section class="card raised main-col" aria-labelledby="up-title">
           <div class="card-head"><div><h2 id="up-title">Upload slips</h2><span class="small muted">The person is found from the filename. Nothing is saved until you press Save.</span></div>
@@ -548,10 +558,106 @@
         <section class="card side-col" aria-labelledby="miss-title" style="gap:0">
           <div class="card-head"><div><h2 id="miss-title">Still missing a slip</h2><span class="small muted">${sl.plan ? 'After this upload' : 'In Drive right now'}</span></div><span class="badge ${missing.length ? 'b-attention' : 'b-sent'}">${missing.length}</span></div>
           ${missing.length ? `<ul class="plain-list" style="padding:0 24px">${missing.map((m) => `
-            <li class="cs-row" style="align-items:center"><span style="display:flex;flex-direction:column;gap:4px"><span>${esc(m.name)}</span><span class="tags">${storeBadges(m.stores || [])}<span class="small muted">${esc(m.id)}</span></span></span>${emp(m.id) ? `<button type="button" class="link-btn" data-open="${esc(m.id)}" style="font-size:13px">Open</button>` : ''}</li>`).join('')}</ul>`
+            <li class="cs-row" style="align-items:center"><span style="display:flex;flex-direction:column;gap:4px"><span>${esc(m.name)}</span><span class="tags">${storeBadges(m.stores || [])}<span class="small muted">${idText(m.id)}</span></span></span>${emp(m.id) ? `<button type="button" class="link-btn" data-open="${esc(m.id)}" style="font-size:13px">Open</button>` : ''}</li>`).join('')}</ul>`
           : '<div class="empty"><h3>Everyone has a slip</h3><span class="small muted">Nothing is missing for this month.</span></div>'}
         </section>
-      </div>`;
+      </div>
+      ${driveSlipsCard()}`;
+  }
+
+  /* ---------- This month's Drive folders (owner, 2026-10-27: create them from the website) ---------- */
+  function folderNotice() {
+    const f = DATA.folders;
+    if (!f || (f.slip && f.calc)) return '';
+    const missing = [!f.slip && 'Payment Slips', !f.calc && 'Payment Calculations'].filter(Boolean).join(' and ');
+    return `<div class="notice" role="note">${icon.alert}<div class="grow">
+        <strong>There is no “${esc(f.name)}” folder in ${esc(missing)} yet.</strong>
+        <span>${f.problem ? esc(f.problem) : 'Slips cannot be saved until it exists. Create it here; nothing else changes.'}</span>
+      </div>${f.problem ? '' : '<button type="button" class="btn btn-primary btn-sm" data-action="create-folders">Create the folders</button>'}</div>`;
+  }
+  async function createFolders(btn) {
+    btn.disabled = true; btn.innerHTML = '<span class="spinner sm"></span>Creating…';
+    try {
+      const res = await call('createMonthFolders', { period: DATA.period });
+      await load(DATA.period, { message: res.message });
+    } catch (err) { toast('Folders not created: ' + errText(err), 'error'); }
+  }
+
+  /* ---------- Slips already in Drive: view, and rename to the standard name ---------- */
+  const DRIVE_VIEW = { standard: ['b-sent', 'Standard name'], rename: ['b-ready', 'Will be renamed'], unknown: ['b-attention', 'Pick the person'], blocked: ['b-failed', 'Left as it is'] };
+  function driveSlipsCard() {
+    const d = state.slips.drive;
+    const head = `<div class="card-head"><div><h2 id="drive-title">Slips in Drive</h2><span class="small muted">Every file in the ${esc(DATA.period)} Payment Slip folder</span></div>
+      <button type="button" class="btn btn-secondary btn-sm" data-action="drive-load">${d && d.rows ? icon.refresh + 'Check again' : 'Show slips in Drive'}</button></div>`;
+    if (!d) return `<section class="card" aria-labelledby="drive-title">${head}</section>`;
+    if (d.loading) return `<section class="card" aria-labelledby="drive-title">${head}<div class="loading"><span class="spinner"></span>Reading the folder…</div></section>`;
+    if (d.error) return `<section class="card" aria-labelledby="drive-title">${head}<div class="card-body"><div class="notice error">${icon.alert}<span class="grow">${esc(d.error)}</span></div></div></section>`;
+    const toRename = d.rows.filter((r) => r.state === 'rename' && d.chosen[r.fileId] !== false);
+    return `<section class="card raised" aria-labelledby="drive-title">${head}
+      ${!d.folderOk ? '<div class="card-body"><p class="muted" style="margin:0">The folder does not exist yet.</p></div>' : !d.rows.length ? '<div class="empty"><h3>The folder is empty</h3></div>' : `
+      <div class="table-wrap"><table class="slip-table">
+        <thead><tr><th scope="col"><span class="sr-only">Rename</span></th><th scope="col">File in Drive</th><th scope="col">Employee</th><th scope="col">Standard name</th><th scope="col">Status</th></tr></thead>
+        <tbody>${d.rows.map((r) => `<tr class="${r.state === 'standard' ? '' : 'warn'}">
+          <td>${r.state === 'rename' ? `<input type="checkbox" data-drive-choose="${esc(r.fileId)}" aria-label="Rename ${esc(r.name)}"${d.chosen[r.fileId] !== false ? ' checked' : ''}>` : ''}</td>
+          <td><a class="fname" href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.name)}</a></td>
+          <td>${r.state === 'unknown' || d.picks[r.fileId] ? `<label class="sr-only" for="dpick-${esc(r.fileId)}">Employee for ${esc(r.name)}</label><select class="select pick" id="dpick-${esc(r.fileId)}" data-drive-pick="${esc(r.fileId)}">${staffOptions(d.picks[r.fileId] || '')}</select>` : r.employeeName ? esc(r.employeeName) : '<span class="muted">—</span>'}</td>
+          <td class="small">${r.target ? esc(r.target) : '<span class="muted">—</span>'}</td>
+          <td><div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start"><span class="badge ${DRIVE_VIEW[r.state][0]}">${DRIVE_VIEW[r.state][1]}</span><span class="small muted">${esc(r.reason)}</span></div></td>
+        </tr>`).join('')}</tbody></table></div>
+      <div class="df-row" style="padding:0 24px 20px">
+        <span class="small muted">Renaming only changes the file's name. A name already in the folder is never reused, and slips of people already sent are left alone.</span>
+        <button type="button" class="btn btn-primary" data-action="drive-rename"${toRename.length ? '' : ' disabled'}>Rename ${toRename.length} to the standard name</button>
+      </div>`}
+    </section>`;
+  }
+  async function loadDriveSlips() {
+    const old = state.slips.drive;
+    const picks = (old && old.picks) || {};
+    state.slips.drive = { loading: true, picks, chosen: (old && old.chosen) || {} };
+    render();
+    try {
+      const res = await call('listSlipFiles', { period: DATA.period, picks });
+      Object.assign(state.slips.drive, { loading: false, rows: res.rows, folderOk: res.folderOk });
+    } catch (err) { Object.assign(state.slips.drive, { loading: false, error: 'Could not read the folder: ' + errText(err) }); }
+    render();
+  }
+  async function renameDriveSlips() {
+    const d = state.slips.drive;
+    const rows = d.rows.filter((r) => r.state === 'rename' && d.chosen[r.fileId] !== false);
+    const ok = await confirmBox('Rename ' + rows.length + ' slip' + (rows.length === 1 ? '' : 's') + '?',
+      `<ul class="plain-list">${rows.map((r) => `<li style="padding:8px 0;display:flex;flex-direction:column;gap:2px"><span class="small muted">${esc(r.name)}</span><strong class="small">→ ${esc(r.target)}</strong></li>`).join('')}</ul>`,
+      'Rename');
+    if (!ok) return;
+    try {
+      const res = await call('renameSlips', { period: DATA.period, fileIds: rows.map((r) => r.fileId), picks: d.picks });
+      toast(res.renamed.length + ' renamed.' + (res.skipped.length ? ' ' + res.skipped.length + ' not renamed: ' + res.skipped.map((s) => s.name + ' (' + s.reason + ')').join('; ') : ''), res.skipped.length ? 'error' : 'ok');
+      await loadDriveSlips();
+      load(DATA.period);
+    } catch (err) { toast('Not renamed: ' + errText(err), 'error'); }
+  }
+
+  /** A yes/no window. Resolves true only when the admin presses the OK button. */
+  function confirmBox(title, html, okLabel, danger) {
+    return new Promise((resolve) => {
+      const dlg = document.getElementById('confirm-dialog');
+      document.getElementById('confirm-title').textContent = title;
+      document.getElementById('confirm-body').innerHTML = html;
+      const go = document.getElementById('confirm-go');
+      go.textContent = okLabel || 'OK';
+      go.className = 'btn ' + (danger ? 'btn-danger' : 'btn-primary');
+      let settled = false;
+      const done = (answer) => {
+        if (settled) return;
+        settled = true;
+        go.onclick = null; dlg.onclose = null;
+        if (dlg.open) dlg.close();
+        resolve(answer);
+      };
+      go.onclick = () => done(true);
+      // A "close" left over from the previous window arrives while this one is open: ignore it.
+      dlg.onclose = () => { if (!dlg.open) done(false); };
+      dlg.showModal();
+    });
   }
 
   async function addSlipFiles(list, sample) {
@@ -617,6 +723,7 @@
         <div class="tools">${periodSelect('ck-month')}${modeBadge()}${refreshBtn()}</div>
       </header>
       ${liveStrip()}${toastHTML()}
+      ${monthSetupCard()}
       <section class="card raised" aria-labelledby="jt">
         <div class="card-head"><div><h2 id="jt">Jibble hours</h2><span class="small muted">The ${esc(DATA.period)} tab was filled from Jibble on ${esc(j.filledAt)}</span></div></div>
         <div class="card-body tiles">
@@ -663,6 +770,52 @@
           </li>`).join('')}</ul>
       </section>`;
   }
+  /* ---------- Start a month (owner, 2026-10-27: the system is used every month, forever) ---------- */
+  const monthLabel = (iso) => new Date(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, 1).toLocaleString('en-GB', { month: 'long', year: 'numeric' });
+  function monthSetupCard() {
+    const m = DATA.months;
+    if (!m) return '';
+    const chosen = state.monthSetup || m.next;
+    const exists = DATA.periods.includes(monthLabel(chosen));
+    return `<section class="card raised" aria-labelledby="ms-title">
+      <div class="card-head"><div><h2 id="ms-title">Start a month</h2><span class="small muted">Makes the month tab from Jibble (a copy of last month’s layout) and its Drive folders. The same as the spreadsheet’s Jibble menu.</span></div></div>
+      <div class="card-body" style="display:flex;flex-wrap:wrap;gap:16px 28px;align-items:flex-end">
+        <label class="field">Month<input class="input" type="month" id="ms-month" value="${esc(chosen)}"></label>
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="ms-fill" checked> Fill the month tab from Jibble</label>
+          <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="ms-folders" checked> Create its Payment Slip and Payment Calculation folders</label>
+          <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="ms-current"${chosen !== m.current ? ' checked' : ''}> Make it the current payout month in Configuration</label>
+          ${exists ? `<label style="display:flex;gap:8px;align-items:center;color:var(--failed-ink)"><input type="checkbox" id="ms-replace"> The “${esc(monthLabel(chosen))}” tab already exists: replace it (anything typed into it is lost)</label>` : ''}
+        </div>
+        <button type="button" class="btn btn-primary" data-action="month-setup">Set up ${esc(monthLabel(chosen))}</button>
+      </div>
+      <p class="small muted" style="margin:0;padding:0 24px 20px;line-height:1.5">Jibble only gives hours for days that have finished, so a new month can be filled from its 2nd day. Run it again later to bring in more days. A tab with anyone marked Paid, or one made by hand, is never replaced.</p>
+    </section>`;
+  }
+  async function setUpMonth(btn) {
+    const month = document.getElementById('ms-month').value;
+    if (!/^\d{4}-\d{2}$/.test(month)) { toast('Choose a month.', 'error'); return; }
+    const args = { month, fill: document.getElementById('ms-fill').checked, folders: document.getElementById('ms-folders').checked,
+      makeCurrent: document.getElementById('ms-current').checked, replace: !!(document.getElementById('ms-replace') || {}).checked };
+    const label = monthLabel(month);
+    if (args.fill && DATA.periods.includes(label) && !args.replace) { toast('“' + label + '” already exists. Tick “replace it” to fill it again.', 'error'); return; }
+    const ok = await confirmBox('Set up ' + label + '?', `<ul style="margin:0;padding-left:20px;line-height:1.7">
+        ${args.fill ? `<li>${args.replace ? '<strong>Replace</strong> the' : 'Make the'} “${esc(label)}” tab from Jibble</li>` : ''}
+        ${args.folders ? `<li>Create the “${esc(label)}” folders in Drive (only if missing)</li>` : ''}
+        ${args.makeCurrent ? `<li>Set Configuration’s payout month to ${esc(label)}</li>` : ''}</ul>`, 'Set up', args.replace);
+    if (!ok) return;
+    btn.disabled = true; btn.innerHTML = '<span class="spinner sm"></span>Working… (this can take a minute)';
+    try {
+      const res = await call('setUpMonth', args);
+      state.monthSetup = null;
+      await load(args.makeCurrent || args.fill ? label : DATA.period, { full: true, message: res.message.split('\n')[0] });
+      await confirmBox(label + ' is set up', `<pre class="email-text" style="white-space:pre-wrap">${esc(res.message)}</pre>`, 'OK');
+    } catch (err) {
+      btn.disabled = false; btn.textContent = 'Set up ' + label;
+      toast('Not set up: ' + errText(err), 'error');
+    }
+  }
+
   function openLink(k) {
     const u = DATA.jibble.unmatched.find((x) => x.store + '|' + x.jibbleId === k);
     const s = DATA.staff.find((x) => x.id === state.links[k]);
@@ -874,21 +1027,18 @@
         </div>
       </section>
       <div class="split" style="align-items:stretch">
-        <section class="card card-body main-col" aria-labelledby="ht" style="display:flex;flex-direction:column;gap:12px">
-          <div style="display:flex;align-items:center;gap:10px;color:var(--brown)">${icon.lock}<h2 id="ht" style="font-size:20px;color:var(--ink)">Sending still happens in the spreadsheet</h2></div>
-          <p class="muted" style="margin:0;line-height:1.5">To send, open Retail Payout 2026 and use the Machino Payout menu:</p>
-          <ol style="margin:0;padding-left:20px;display:flex;flex-direction:column;gap:6px">
-            <li><strong>3. Test Payout Email</strong> — goes to the test inbox only</li>
-            <li><strong>4. Pre-Send Check</strong> — same list as above</li>
-            <li><strong>5. Send Ready Employees</strong> — LIVE, Authorized Sender only, Test Mode off</li>
-          </ol>
+        <section class="card card-body main-col" aria-labelledby="tt" style="display:flex;flex-direction:column;gap:12px">
+          <h2 id="tt" style="font-size:20px">3. Test Payout Email</h2>
+          <p class="muted" style="margin:0;line-height:1.5">Sends each email to the Test Email in Configuration only, with both attachments. No employee receives anything, and nothing is marked Sent.</p>
+          <button type="button" class="btn btn-secondary" data-action="send-test" style="align-self:flex-start">${icon.mail}Send test emails</button>
         </section>
-        <section class="card card-body side-col later" aria-labelledby="lt" style="gap:10px">
-          <h2 id="lt" style="font-size:18px">Later: send from here</h2>
-          <p class="small muted" style="margin:0;line-height:1.5">Once the dashboard is connected and tested, TEST and then LIVE sending can move here, with the red LIVE warning and a typed confirmation.</p>
-          <button type="button" class="btn btn-secondary btn-sm" data-action="live-preview" style="align-self:flex-start">Preview the LIVE confirmation</button>
+        <section class="card card-body side-col" aria-labelledby="lt" style="display:flex;flex-direction:column;gap:12px">
+          <h2 id="lt" style="font-size:20px">5. Send Ready Employees</h2>
+          <p class="muted" style="margin:0;line-height:1.5">${DATA.testMode ? 'Test Mode is ON, so these also go to the test inbox only.' : '<strong>LIVE:</strong> real emails to real employees, from the Authorized Sender. You type a confirmation first.'}</p>
+          <button type="button" class="btn ${DATA.testMode ? 'btn-secondary' : 'btn-live'}" data-action="send-live" style="align-self:flex-start">${icon.send || icon.mail}Send to employees</button>
         </section>
-      </div>`;
+      </div>
+      <p class="small muted" style="margin:0;line-height:1.5">Both run the spreadsheet’s own sending: everyone is checked again right before their email, the Send Log is written as it happens, and anyone already sent is never sent again. Only the month set in Configuration can be sent.</p>`;
   }
 
   /* ---------- History ---------- */
@@ -1005,7 +1155,7 @@
           <div class="dh-top">
             <div class="dh-id">
               <span class="avatar lg soft" aria-hidden="true">${esc(initials(e.name))}</span>
-              <div style="display:flex;flex-direction:column;gap:6px;min-width:0"><h2 id="drawer-title">${esc(e.name)}</h2><span class="tags"><span class="small muted">${esc(e.id)}</span>${storeBadges(e.stores)}</span></div>
+              <div style="display:flex;flex-direction:column;gap:6px;min-width:0"><h2 id="drawer-title">${esc(e.name)}</h2><span class="tags"><span class="small muted">${idText(e.id)}</span>${storeBadges(e.stores)}</span></div>
             </div>
             <div class="dh-actions">
               <button type="button" class="icon-btn" data-nav-emp="${idx > 0 ? esc(rows[idx - 1].id) : ''}" aria-label="Previous employee"${idx > 0 ? '' : ' disabled'}><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></button>
@@ -1040,7 +1190,7 @@
             <div class="dsec-head"><h3 id="d-info-h">Employee information</h3><button type="button" class="link-btn" data-sheet="Staff Directory" style="font-size:13px">Edit in Staff Directory ${icon.ext}</button></div>
             <div class="dsec-body">
               <dl class="kv">
-                <div><dt>Employee ID</dt><dd>${esc(e.id)}</dd></div>
+                <div><dt>Employee ID</dt><dd>${idText(e.id)}</dd></div>
                 <div><dt>Store</dt><dd>${esc(e.stores.join(' and '))}</dd></div>
                 <div><dt>Email</dt><dd>${esc(e.email)}</dd></div>
                 <div><dt>Jibble ID</dt><dd>${dash(e.jibble)}</dd></div>
@@ -1284,7 +1434,7 @@
     return `
       <header class="page-head">
         <div class="title-block"><h1>Staff Directory</h1><span class="small muted">The Staff Directory tab of Retail Payout 2026. Changes are written there.</span></div>
-        <div class="tools">${refreshBtn()}</div>
+        <div class="tools">${refreshBtn()}<button type="button" class="btn btn-primary" data-action="staff-add">${icon.plus || '+'} Add person</button></div>
       </header>
       ${toastHTML()}
       <div class="card card-body" style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:16px">
@@ -1305,61 +1455,186 @@
             <td><button type="button" class="btn btn-secondary btn-sm" data-staff-edit="${esc(s.id)}">Edit</button></td>
           </tr>`).join('')}</tbody></table></div>`
         : `<div class="empty"><h3>Nobody found</h3><span class="muted small">Try another name, or show everyone.</span></div>`}
-        <p class="small muted" style="margin:0;padding:0 24px 20px;line-height:1.5">Employee ID cannot be changed here: it is how the payout finds each person. New people are added in the spreadsheet.</p>
+        <p class="small muted" style="margin:0;padding:0 24px 20px;line-height:1.5">An Employee ID cannot be changed once it is saved: it is how the payout finds each person. Someone who has left can be marked not active, or deleted when they are no longer on the current month's payroll.</p>
       </section>`;
   }
+  /** The edit window; id null = add a new person. */
   function openStaff(id) {
-    const s = staffRow(id);
+    const adding = id === null;
+    const s = adding ? { id: '', internalId: '', name: '', alias: '', email: '', store: '', active: true, rate: '', ss18: '', ioi: '' } : staffRow(id);
     if (!s) return;
-    state.staff.editId = id;
-    document.getElementById('staff-title').textContent = 'Edit ' + s.name;
-    const stores = ['SS18', 'IOI'].concat(s.store && !['SS18', 'IOI'].includes(s.store) ? [s.store] : []);
+    state.staff.editId = adding ? null : id;
+    document.getElementById('staff-title').textContent = adding ? 'Add a person' : 'Edit ' + s.name;
+    const known = [...new Set(DATA.staff.map((x) => x.store).filter(Boolean).concat(['SS18', 'IOI']))].sort();
     document.getElementById('staff-body').innerHTML = `
       <div class="form">
-        <div class="field"><span>Employee ID</span><div class="locked"><span>${esc(s.id)}</span><span class="calc">${icon.lock.replace('width="18" height="18"', 'width="11" height="11"')}Not changeable</span></div></div>
+        ${adding
+          ? `<div class="field"><label for="sf-id">Employee ID</label><input class="input" id="sf-id" placeholder="e.g. 031" autocomplete="off"></div>
+             <div class="field"><label for="sf-internalId">Internal Staff ID <span class="muted">(optional)</span></label><input class="input" id="sf-internalId" autocomplete="off"></div>`
+          : `<div class="field"><span>Employee ID</span><div class="locked"><span>${esc(s.id)}</span><span class="calc">${icon.lock.replace('width="18" height="18"', 'width="11" height="11"')}Not changeable</span></div></div>`}
         <div class="field"><label for="sf-name">Name</label><input class="input" id="sf-name" value="${esc(s.name)}"></div>
         <div class="field"><label for="sf-alias">Payment Slip Name Alias</label><input class="input" id="sf-alias" value="${esc(s.alias)}"></div>
         <div class="field"><label for="sf-email">Employee Email</label><input class="input" type="email" id="sf-email" value="${esc(s.email)}"></div>
-        <div class="field"><label for="sf-store">Store</label><select class="select" id="sf-store"><option value="">—</option>${stores.map((x) => `<option${x === s.store ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select></div>
+        <div class="field"><label for="sf-store">Store</label><input class="input" id="sf-store" list="sf-stores" value="${esc(s.store)}"><datalist id="sf-stores">${known.map((x) => `<option value="${esc(x)}">`).join('')}</datalist></div>
         <div class="field"><label for="sf-rate">Hourly Rate</label><div class="money-in"><span>RM</span><input class="input" id="sf-rate" inputmode="decimal" value="${esc(s.rate)}"></div></div>
         <div class="field"><label for="sf-ss18">Jibble ID (SS18)</label><input class="input" id="sf-ss18" value="${esc(s.ss18)}"></div>
         <div class="field"><label for="sf-ioi">Jibble ID (IOI)</label><input class="input" id="sf-ioi" value="${esc(s.ioi)}"></div>
         <label class="field" style="flex-direction:row;align-items:center;gap:10px"><input type="checkbox" id="sf-active"${s.active ? ' checked' : ''}> Active</label>
       </div>
-      <p class="small muted" style="margin:0;line-height:1.5">Changing the email changes where this person's payout email goes, so it asks for the password again if you signed in more than 5 minutes ago.</p>
+      ${adding ? '' : '<p class="small muted" style="margin:0;line-height:1.5">Changing the email changes where this person\'s payout email goes, so it asks for the password again if you signed in more than 5 minutes ago.</p>'}
       <div class="notice error" id="staff-error" hidden>${icon.alert}<span class="grow"></span></div>
       <div class="dialog-actions">
+        ${adding ? '' : '<button type="button" class="btn btn-quiet" id="staff-delete" style="margin-right:auto;color:var(--failed-ink)">Delete…</button>'}
         <button type="button" class="btn btn-secondary" data-close="staff-dialog">Cancel</button>
-        <button type="button" class="btn btn-primary" id="staff-save">Save</button>
+        <button type="button" class="btn btn-primary" id="staff-save">${adding ? 'Add person' : 'Save'}</button>
       </div>`;
     document.getElementById('staff-dialog').showModal();
+    document.getElementById(adding ? 'sf-id' : 'sf-name').focus();
+  }
+  function staffError(text) {
+    const box = document.getElementById('staff-error');
+    box.hidden = false;
+    box.querySelector('.grow').textContent = text;
   }
   async function saveStaff() {
-    const s = staffRow(state.staff.editId);
-    if (!s) return;
+    const adding = state.staff.editId === null;
+    const s = adding ? null : staffRow(state.staff.editId);
+    if (!adding && !s) return;
     const val = (k) => k === 'active' ? document.getElementById('sf-active').checked : document.getElementById('sf-' + k).value.trim();
-    const changes = {};
-    STAFF_FIELDS.forEach(([k]) => { if (val(k) !== (k === 'active' ? s.active : String(s[k] || ''))) changes[k] = val(k); });
-    const box = document.getElementById('staff-error');
-    if (!Object.keys(changes).length) { document.getElementById('staff-dialog').close(); return; }
     const btn = document.getElementById('staff-save');
-    btn.disabled = true; btn.innerHTML = '<span class="spinner sm" aria-hidden="true"></span>Saving…';
-    try {
+    const label = btn.textContent;
+    let request;
+    if (adding) {
+      const person = { id: val('id'), internalId: val('internalId') };
+      STAFF_FIELDS.forEach(([k]) => { person[k] = val(k); });
+      if (!person.id || !person.name) { staffError('Type the Employee ID and the name.'); return; }
+      request = ['addStaff', { person }];
+    } else {
+      const changes = {};
+      STAFF_FIELDS.forEach(([k]) => { if (val(k) !== (k === 'active' ? s.active : String(s[k] || ''))) changes[k] = val(k); });
+      if (!Object.keys(changes).length) { document.getElementById('staff-dialog').close(); return; }
       const expected = {};
       STAFF_FIELDS.forEach(([k]) => { expected[k] = s[k]; });
-      const res = await call('saveStaff', { employeeId: s.id, expected, changes });
+      request = ['saveStaff', { employeeId: s.id, expected, changes }];
+    }
+    btn.disabled = true; btn.innerHTML = '<span class="spinner sm" aria-hidden="true"></span>Saving…';
+    try {
+      const res = await call(request[0], request[1]);
       DATA.staff = res.staff;
       document.getElementById('staff-dialog').close();
       toast(res.message || 'Saved.', 'ok');
     } catch (err) {
-      box.hidden = false;
-      box.querySelector('.grow').textContent = 'Not saved: ' + errText(err);
-      btn.disabled = false; btn.textContent = 'Save';
+      staffError('Not saved: ' + errText(err));
+      btn.disabled = false; btn.textContent = label;
     }
   }
+  async function deleteStaff() {
+    const s = staffRow(state.staff.editId);
+    if (!s) return;
+    document.getElementById('staff-dialog').close();
+    const ok = await confirmBox('Delete ' + s.name + '?',
+      `<p style="margin:0;line-height:1.5">This deletes <strong>${esc(s.name)}</strong> (Employee ID ${esc(s.id)}) from the Staff Directory tab. It cannot be undone from the dashboard.</p>
+       <p class="small muted" style="margin:0;line-height:1.5">If they have only left, untick <strong>Active</strong> instead: their history stays linked. Someone on the current month's payroll cannot be deleted.</p>
+       <label class="field">Type DELETE to confirm<input class="input" id="confirm-word" autocomplete="off"></label>`, 'Delete', true);
+    if (!ok) return;
+    const word = (document.getElementById('confirm-word') || {}).value || '';
+    if (word.trim() !== 'DELETE') { toast('Not deleted: DELETE was not typed.', 'error'); return; }
+    const expected = {};
+    STAFF_FIELDS.forEach(([k]) => { expected[k] = s[k]; });
+    try {
+      const res = await call('deleteStaff', { employeeId: s.id, expected, confirm: 'DELETE' });
+      DATA.staff = res.staff;
+      toast(res.message, 'ok');
+    } catch (err) { toast('Not deleted: ' + errText(err), 'error'); }
+  }
 
-  const ROUTES = { overview, payroll, slips, checks, settings, send, history, staff: staffPage };
-  const TITLES = { overview: 'Overview', payroll: 'Payroll Management', slips: 'Payment Slips', checks: 'Jibble & Documents', settings: 'Settings', send: 'Send Center', history: 'History', staff: 'Staff Directory' };
+  /* ---------- Tools: the spreadsheet's menus on the website (owner, 2026-10-27) ---------- */
+  const LEVEL_VIEW = { block: ['b-failed', 'Stops'], warn: ['b-attention', 'Check'], ok: ['b-sent', 'OK'] };
+  function toolsPage() {
+    const tl = state.tools;
+    const row = (title, note, action) => `<li class="tool-row"><div style="flex:1 1 260px;display:flex;flex-direction:column;gap:2px"><strong>${title}</strong><span class="small muted">${note}</span></div>${action}</li>`;
+    const f = DATA.folders || {};
+    const ids = tl.ids;
+    return `
+      <header class="page-head">
+        <div class="title-block"><h1>Tools</h1><span class="small muted">The spreadsheet’s Machino Payout and Jibble menus, here. Each one runs the spreadsheet’s own code.</span></div>
+        <div class="tools">${refreshBtn()}</div>
+      </header>
+      ${toastHTML()}
+      <section class="card raised" aria-labelledby="mp-title">
+        <div class="card-head"><div><h2 id="mp-title">Machino Payout</h2><span class="small muted">For ${esc(DATA.period)}</span></div></div>
+        <ul class="plain-list" style="padding:0 24px">
+          ${row('Check System', 'A read-only check of everything the payout needs. Changes nothing.', `<button type="button" class="btn btn-secondary btn-sm" data-action="tool-check"${tl.checking ? ' disabled' : ''}>${tl.checking ? '<span class="spinner sm"></span>Checking…' : 'Run Check System'}</button>`)}
+          ${tl.check ? `<li style="padding:0 0 16px"><div class="card" style="padding:16px;display:flex;flex-direction:column;gap:10px">
+              <strong>${tl.check.canPrepare ? 'Ready to prepare ' : 'Not ready to prepare '}${esc(tl.check.period)}</strong>
+              ${tl.check.findings.length ? `<ul class="plain-list">${tl.check.findings.map((x) => `<li style="display:flex;gap:10px;align-items:flex-start;padding:8px 0"><span class="badge ${(LEVEL_VIEW[x.level] || LEVEL_VIEW.warn)[0]}">${(LEVEL_VIEW[x.level] || LEVEL_VIEW.warn)[1]}</span><div><strong class="small">${esc(x.title)}</strong>${x.detail ? `<div class="small muted">${esc(x.detail)}</div>` : ''}</div></li>`).join('')}</ul>` : '<span class="small muted">No problems found.</span>'}
+              <span class="small muted">${esc(tl.check.note)}</span></div></li>` : ''}
+          ${row('1. Prepare Payout', 'Makes the Payment Calculations and updates Payout Control. Never sends an email.', '<button type="button" class="btn btn-secondary btn-sm" data-action="prepare">Prepare payouts</button>')}
+          ${row('2. Review Payouts', 'Check each person and tick Manager Verified.', '<a class="btn btn-secondary btn-sm" href="#payroll">Open Payroll Management</a>')}
+          ${row('3. Test Payout Email', 'Sends to the test inbox only.', '<button type="button" class="btn btn-secondary btn-sm" data-action="send-test">Send test emails</button>')}
+          ${row('4. Pre-Send Check', 'Who will be sent, who cannot be sent yet, and why.', '<a class="btn btn-secondary btn-sm" href="#send">Open Send Center</a>')}
+          ${row('5. Send Ready Employees', DATA.testMode ? 'Test Mode is ON: these go to the test inbox too.' : 'LIVE: emails real employees. You type a confirmation first.', '<button type="button" class="btn btn-secondary btn-sm" data-action="send-live">Send to employees</button>')}
+          ${row('Setup &amp; Repair: month folders', f.slip && f.calc ? 'This month’s Payment Slip and Payment Calculation folders exist.' : 'A folder for ' + esc(f.name || DATA.period) + ' is missing.',
+            f.slip && f.calc ? '<span class="badge b-sent">Done</span>' : '<button type="button" class="btn btn-secondary btn-sm" data-action="create-folders">Create the folders</button>')}
+          ${row('Setup &amp; Repair: fill blank Employee IDs', 'Only where the Staff Directory has exactly one person with that name. Shown first; nothing changes until you approve.',
+            `<button type="button" class="btn btn-secondary btn-sm" data-action="tool-ids"${tl.idsLoading ? ' disabled' : ''}>${tl.idsLoading ? '<span class="spinner sm"></span>Checking…' : 'Show what can be filled'}</button>`)}
+          ${ids ? `<li style="padding:0 0 16px"><div class="card" style="padding:16px;display:flex;flex-direction:column;gap:10px">
+              ${ids.items.length ? `<ul class="plain-list">${ids.items.map((i) => `<li style="display:flex;gap:10px;align-items:center;padding:6px 0"><input type="checkbox" data-id-fill="${i.row}"${tl.idChosen[i.row] !== false ? ' checked' : ''} aria-label="Fill row ${i.row}"><span class="small">Row ${i.row} · <strong>${esc(i.name)}</strong> · ${i.current ? '“' + esc(i.current) + '”' : 'blank'} → <strong>${esc(i.proposed)}</strong></span></li>`).join('')}</ul>
+                <button type="button" class="btn btn-primary btn-sm" data-action="tool-ids-apply" style="align-self:flex-start">Fill in the ticked IDs</button>` : '<span class="small muted">Nothing can be filled in automatically.</span>'}
+              ${ids.refusals.length ? `<details><summary class="small">Not filled (${ids.refusals.length})</summary><ul class="plain-list">${ids.refusals.map((r) => `<li class="small" style="padding:6px 0"><strong>${esc(r.label)}</strong> · <span class="muted">${esc(r.reason)}</span></li>`).join('')}</ul></details>` : ''}
+            </div></li>` : ''}
+        </ul>
+      </section>
+      <section class="card" aria-labelledby="jm-title">
+        <div class="card-head"><div><h2 id="jm-title">Jibble</h2><span class="small muted">Fill in a month from Jibble</span></div><a class="btn btn-secondary btn-sm" href="#checks">Start a month</a></div>
+      </section>
+      <section class="card" aria-labelledby="dm-title">
+        <div class="card-head"><div><h2 id="dm-title">Delete a month tab</h2><span class="small muted">For testing: delete a month the Jibble menu made, then make it again with Start a month.</span></div></div>
+        <div class="card-body" style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end">
+          <label class="field">Month<select class="select" id="dm-month">${DATA.periods.map((p) => `<option${p === (tl.delMonth || DATA.period) ? ' selected' : ''}>${esc(p)}</option>`).join('')}</select></label>
+          <button type="button" class="btn btn-danger" data-action="tool-delete-month">Delete…</button>
+        </div>
+        <p class="small muted" style="margin:0;padding:0 24px 20px;line-height:1.5">Refused for a tab made by hand, a tab with anyone marked Paid, or a month with any payout Sent or Review Required. Payout Control rows are kept. Undo: File → Version history in the spreadsheet.</p>
+      </section>`;
+  }
+  async function runCheckSystem() {
+    state.tools.checking = true; render();
+    try { state.tools.check = await call('checkSystem', {}); } catch (err) { toast('Check System did not run: ' + errText(err), 'error'); }
+    state.tools.checking = false; render();
+  }
+  async function loadIdFills() {
+    state.tools.idsLoading = true; render();
+    try { state.tools.ids = await call('planIdFills', {}); state.tools.idChosen = {}; } catch (err) { toast('Could not check: ' + errText(err), 'error'); }
+    state.tools.idsLoading = false; render();
+  }
+  async function applyIdFills() {
+    const rows = state.tools.ids.items.filter((i) => state.tools.idChosen[i.row] !== false).map((i) => i.row);
+    if (!rows.length) return;
+    const ok = await confirmBox('Fill in ' + rows.length + ' Employee ID' + (rows.length === 1 ? '' : 's') + '?',
+      '<p style="margin:0;line-height:1.5">Each one is written into the payroll tab’s Employee ID cell, as text, after checking the cell has not changed.</p>', 'Fill in');
+    if (!ok) return;
+    try {
+      const res = await call('applyIdFills', { rows });
+      state.tools.ids = null;
+      await load(DATA.period, { message: res.message });
+    } catch (err) { toast('Not filled: ' + errText(err), 'error'); }
+  }
+  async function deleteMonthTab() {
+    const period = document.getElementById('dm-month').value;
+    const ok = await confirmBox('Delete the “' + period + '” tab?',
+      `<p style="margin:0;line-height:1.5">This deletes the <strong>${esc(period)}</strong> tab from Retail Payout 2026. Payout Control rows and Drive files are kept.</p>
+       <label class="field">Type ${esc(period)} to confirm<input class="input" id="confirm-word" autocomplete="off"></label>`, 'Delete the tab', true);
+    if (!ok) return;
+    const typed = ((document.getElementById('confirm-word') || {}).value || '').trim();
+    try {
+      const res = await call('deleteMonthTab', { period, typed });
+      const next = DATA.periods.find((p) => p !== period) || null;
+      await load(next, { full: true, message: res.message });
+    } catch (err) { toast('Not deleted: ' + errText(err), 'error'); }
+  }
+
+  const ROUTES = { overview, payroll, slips, checks, settings, send, history, staff: staffPage, tools: toolsPage };
+  const TITLES = { overview: 'Overview', payroll: 'Payroll Management', slips: 'Payment Slips', checks: 'Jibble & Documents', settings: 'Settings', send: 'Send Center', history: 'History', staff: 'Staff Directory', tools: 'Tools' };
   const view = document.getElementById('view');
   function currentRoute() {
     const r = (location.hash || '#overview').slice(1);
@@ -1461,6 +1736,7 @@
     const closeD = t.closest('[data-close]');
     if (closeD) { document.getElementById(closeD.dataset.close).close(); return; }
     if (t.closest('#staff-save')) { saveStaff(); return; }
+    if (t.closest('#staff-delete')) { deleteStaff(); return; }
 
     // Drawer
     if (t.closest('[data-action="close-drawer"]')) { closeDrawer(); return; }
@@ -1545,11 +1821,21 @@
     if (a === 'dismiss') { state.toast = null; render(); }
     if (a === 'clear-filters') { Object.assign(state.payroll, { q: '', store: 'all', status: 'all', pay: 'all' }); render(); }
     if (a === 'prepare') openPrepare();
-    if (a === 'live-preview') openLivePreview();
+    if (a === 'send-test') sendFlow(true);
+    if (a === 'send-live') sendFlow(false);
     if (a === 'slips-sample') addSlipFiles(SAMPLE_SLIPS.map(([name, size]) => ({ name, size })), true);
     if (a === 'slips-clear') { state.slips.files = []; state.slips.plan = null; render(); }
     if (a === 'slips-save') openSlipSave();
     if (a === 'slips-dismiss') { state.slips.result = null; render(); }
+    if (a === 'create-folders') createFolders(t.closest('[data-action]'));
+    if (a === 'drive-load') loadDriveSlips();
+    if (a === 'drive-rename') renameDriveSlips();
+    if (a === 'staff-add') openStaff(null);
+    if (a === 'month-setup') setUpMonth(t.closest('[data-action]'));
+    if (a === 'tool-check') runCheckSystem();
+    if (a === 'tool-ids') loadIdFills();
+    if (a === 'tool-ids-apply') applyIdFills();
+    if (a === 'tool-delete-month') deleteMonthTab();
     if (a === 'start-review') {
       const first = canVerify(payrollRows()).find((x) => !x.verified);
       if (first) openDrawer(first.id);
@@ -1600,6 +1886,11 @@
     if (t.dataset.verify) { const p = emp(t.dataset.verify); openVerify(p, !p.verified); }
     if (t.dataset.cfg && t.tagName === 'SELECT') { state.cfg.draft[t.dataset.cfg] = t.value; render(); }
     if (t.dataset.pick) { const f = state.slips.files.find((x) => x.key === t.dataset.pick); f.pickedId = t.value; f.changing = false; planSlips(); }
+    if (t.id === 'ms-month' && t.value) { state.monthSetup = t.value; render(); }
+    if (t.id === 'dm-month') state.tools.delMonth = t.value;
+    if (t.dataset.idFill) state.tools.idChosen[t.dataset.idFill] = t.checked;
+    if (t.dataset.drivePick) { const d = state.slips.drive; if (t.value) d.picks[t.dataset.drivePick] = t.value; else delete d.picks[t.dataset.drivePick]; loadDriveSlips(); }
+    if (t.dataset.driveChoose) { state.slips.drive.chosen[t.dataset.driveChoose] = t.checked; render(); }
     if (t.dataset.link) { state.links[t.dataset.link] = t.value; render(); }
   });
   ['dragenter', 'dragover'].forEach((type) => view.addEventListener(type, (e) => {
@@ -1670,30 +1961,65 @@
 
   /* ---------- LIVE confirmation preview (never sends anything) ---------- */
   const dlg = document.getElementById('live-dialog');
+  /* ---------- Sending: 3. Test Payout Email and 5. Send Ready Employees (owner, 2026-10-27) ---------- */
   const confirmInput = document.getElementById('live-confirm');
   const sendBtn = document.getElementById('live-send');
-  function openLivePreview() {
-    const will = DATA.preSend.will;
-    const phrase = 'SEND ' + will.length;
-    document.getElementById('live-title').textContent = `Send ${will.length} payout emails now?`;
+  const branchArg = () => ({ both: '', ss18: 'SS18', ioi: 'IOI' })[state.branch] || '';
+  let pendingSend = null;
+  /** test: true = 3. Test Payout Email; false = 5. Send Ready Employees. */
+  async function sendFlow(test) {
+    let rep;
+    try { rep = await call('sendPreview', { test, branch: branchArg() }); } catch (err) { toast('Could not check: ' + errText(err), 'error'); return; }
+    if (!rep.ok) { toast(rep.error, 'error'); return; }
+    if (!rep.canProceed) {
+      await confirmBox('Nothing can be sent yet', `<pre class="email-text" style="white-space:pre-wrap">${esc(rep.text)}</pre>`, 'OK');
+      return;
+    }
+    const n = rep.willSend.length;
+    if (rep.isTest) {
+      const ok = await confirmBox('Send ' + n + ' TEST email' + (n === 1 ? '' : 's') + '?',
+        `<p style="margin:0;line-height:1.5">Each goes to the test inbox only. No employee receives anything.</p>
+         <ul class="plain-list">${rep.willSend.map((w) => `<li class="cs-row"><span>${esc(w.name)}</span><span class="small muted">to ${esc(w.to)}</span></li>`).join('')}</ul>`, 'Send test emails');
+      if (ok) await doSend({ test, count: n, confirm: 'TEST' });
+      return;
+    }
+    const phrase = 'SEND ' + n;
+    document.getElementById('live-title').textContent = `Send ${n} payout email${n === 1 ? '' : 's'} now?`;
     document.getElementById('live-confirm-label').textContent = `Type ${phrase} to confirm`;
     document.getElementById('live-facts').innerHTML =
-      `<div><span>Payroll month</span><strong>${esc(DATA.period)}</strong></div>
-       <div><span>Branch</span><strong>Both stores</strong></div>
-       <div><span>Sending from</span><strong>The Authorized Sender</strong></div>
-       <div><span>Skipped</span><strong>${DATA.preSend.cannot.length} cannot send · ${DATA.preSend.sent.length} already sent</strong></div>`;
-    document.getElementById('live-list').innerHTML = will.map((w) => `<li class="cs-row"><span>${esc(w.name)}</span><span class="muted num">${esc(w.total)}</span></li>`).join('');
+      `<div><span>Payroll month</span><strong>${esc(rep.period)}</strong></div>
+       <div><span>Branch</span><strong>${esc(rep.branch)}</strong></div>
+       <div><span>Sending from</span><strong>${esc(rep.sender)}</strong></div>
+       <div><span>Skipped</span><strong>${rep.cannotSend.length} cannot send · ${rep.alreadySent.length} already sent</strong></div>`;
+    document.getElementById('live-list').innerHTML = rep.willSend.map((w) => `<li class="cs-row"><span>${esc(w.name)}</span><span class="small muted">${esc(w.to)}</span></li>`).join('');
     confirmInput.value = '';
     sendBtn.disabled = true;
-    sendBtn.textContent = `Send ${will.length} LIVE emails`;
+    sendBtn.textContent = `Send ${n} LIVE email${n === 1 ? '' : 's'}`;
     sendBtn.dataset.phrase = phrase;
-    document.getElementById('live-note').hidden = true;
+    pendingSend = { test, count: n, confirm: phrase };
     dlg.showModal();
     document.getElementById('live-cancel').focus();
   }
+  async function doSend(args) {
+    toast((args.test ? 'Sending test emails' : 'Sending') + '… keep this page open.', '');
+    try {
+      const res = await call('sendEmails', Object.assign({ branch: branchArg() }, args));
+      await load(DATA.period, { message: (res.isTest ? 'Test emails: ' : 'Sent: ') + res.sent });
+      await confirmBox(res.isTest ? 'Test emails done' : 'Sending done', `<pre class="email-text" style="white-space:pre-wrap">${esc(res.text)}</pre>`, 'OK');
+    } catch (err) {
+      await load(DATA.period);
+      await confirmBox('Sending stopped', `<pre class="email-text" style="white-space:pre-wrap">${esc(errText(err))}</pre>`, 'OK');
+    }
+  }
   confirmInput.addEventListener('input', () => { sendBtn.disabled = confirmInput.value.trim() !== sendBtn.dataset.phrase; });
-  sendBtn.addEventListener('click', () => { document.getElementById('live-note').hidden = false; sendBtn.disabled = true; });
-  document.getElementById('live-cancel').addEventListener('click', () => dlg.close());
+  sendBtn.addEventListener('click', () => {
+    if (!pendingSend || confirmInput.value.trim() !== pendingSend.confirm) return;
+    const args = pendingSend;
+    pendingSend = null;
+    dlg.close();
+    doSend(args);
+  });
+  document.getElementById('live-cancel').addEventListener('click', () => { pendingSend = null; dlg.close(); });
 
   // Hook for the self-test (selftest.js). Harmless: it exposes only this tab's memory.
   window.__payout = { state, get data() { return DATA; }, render, renderDrawer, load };

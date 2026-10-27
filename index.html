@@ -457,6 +457,11 @@ kbd { display: inline-block; min-width: 20px; padding: 0 5px; border: 1px solid 
 @media (max-width: 760px) { .cfg-row { grid-template-columns: minmax(0, 1fr); } .cfg-group { padding-left: 16px; padding-right: 16px; } }
 #email-dialog { width: min(720px, calc(100vw - 32px)); }
 #staff-dialog { width: min(640px, calc(100vw - 32px)); }
+#confirm-dialog { width: min(600px, calc(100vw - 32px)); }
+.tool-row { display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: center; padding: 14px 0; border-bottom: 1px solid var(--line, #E5DED3); }
+.tool-row:last-child { border-bottom: 0; }
+.btn-danger { background: var(--failed-ink, #9B2C2C); color: #fff; border-color: transparent; }
+.btn-danger:hover { filter: brightness(1.08); }
 @media (max-width: 760px) { .list-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 40px; } .mode-row { padding: 16px; } }
 </style>
 </head>
@@ -505,6 +510,7 @@ kbd { display: inline-block; min-width: 20px; padding: 0 5px; border: 1px solid 
           <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
           History</a>
         <a href="#checks" data-route="checks" class="mobile-only">Jibble &amp; Documents</a>
+        <a href="#tools" data-route="tools" class="mobile-only">Tools</a>
         <a href="#settings" data-route="settings" class="mobile-only">Settings</a>
       </nav>
       <div class="side-bottom">
@@ -513,6 +519,9 @@ kbd { display: inline-block; min-width: 20px; padding: 0 5px; border: 1px solid 
           <a href="#checks" data-route="checks">
             <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 15l2 2 4-4"/></svg>
             Jibble &amp; Documents</a>
+          <a href="#tools" data-route="tools">
+            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/></svg>
+            Tools</a>
           <a href="#settings" data-route="settings">
             <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/></svg>
             Settings</a>
@@ -613,6 +622,18 @@ kbd { display: inline-block; min-width: 20px; padding: 0 5px; border: 1px solid 
   </div>
 </dialog>
 
+<!-- A yes/no window (confirmBox in app.js) -->
+<dialog id="confirm-dialog" aria-labelledby="confirm-title">
+  <div class="dialog-head"><h2 id="confirm-title">Are you sure?</h2><button type="button" class="icon-btn" data-close="confirm-dialog" aria-label="Close">✕</button></div>
+  <div class="dialog-body">
+    <div id="confirm-body" style="display:flex;flex-direction:column;gap:12px"></div>
+    <div class="dialog-actions">
+      <button type="button" class="btn btn-secondary" data-close="confirm-dialog">Cancel</button>
+      <button type="button" class="btn btn-primary" id="confirm-go">OK</button>
+    </div>
+  </div>
+</dialog>
+
 <!-- Staff Directory: edit one person -->
 <dialog id="staff-dialog" aria-labelledby="staff-title">
   <div class="dialog-head"><h2 id="staff-title">Edit</h2><button type="button" class="icon-btn" data-close="staff-dialog" aria-label="Close">✕</button></div>
@@ -625,14 +646,13 @@ kbd { display: inline-block; min-width: 20px; padding: 0 5px; border: 1px solid 
   <div class="dialog-body" id="email-body"></div>
 </dialog>
 
-<!-- LIVE confirmation: design preview only. Not connected to any send function. -->
+<!-- LIVE confirmation for 5. Send Ready Employees: the typed SEND <n> is checked again by the backend. -->
 <dialog id="live-dialog" aria-labelledby="live-title">
   <div class="live-bar">
     <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
     LIVE — real emails to real employees
   </div>
   <div class="dialog-body">
-    <span class="sample-tag" style="align-self:flex-start">Design preview · sending is not connected</span>
     <h2 id="live-title" style="font-size:24px"></h2>
     <dl class="facts" id="live-facts"></dl>
     <ul class="plain-list recipients" id="live-list"></ul>
@@ -644,7 +664,6 @@ kbd { display: inline-block; min-width: 20px; padding: 0 5px; border: 1px solid 
       <button type="button" class="btn btn-secondary" id="live-cancel">Cancel</button>
       <button type="button" class="btn btn-live" id="live-send" disabled>Send LIVE emails</button>
     </div>
-    <p class="small muted" style="margin:0" id="live-note" hidden>This is a design preview. Nothing was sent. LIVE sending stays in the spreadsheet until you approve moving it here.</p>
   </div>
 </dialog>
 

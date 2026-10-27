@@ -132,7 +132,7 @@ window.DashboardPreview = (function () {
   }
 
   function build(period) {
-    const oct = period === 'October 2026';
+    const oct = period !== 'September 2026';   // any newer month looks like October
     const short = oct ? 'Oct' : 'Sep';
     const employees = PEOPLE.map((p) => {
       const d = dir(p.id);
@@ -152,11 +152,22 @@ window.DashboardPreview = (function () {
         e.lines = e.lines.map((l) => [l[0], l[1], l[2], l[3] == null ? 10 : l[3]]);
       }
       settle(e);
+      if (period !== 'October 2026' && period !== 'September 2026') {
+        // A month just filled from Jibble: nobody paid, prepared or verified yet.
+        Object.assign(e, { payment: 'Not paid', paymentId: '', paymentDate: '', verified: false, status: 'Needs Attention',
+          issue: 'Not prepared yet.', fix: 'Run Prepare Payout.', pdf: 'Not made yet' });
+      }
       e.canEdit = !['Sent', 'Review Required'].includes(e.status);
       return e;
     });
     const existing = DIRECTORY.filter((d) => PEOPLE.some((p) => p.id === d.id) && (!oct || !MISSING_SLIPS.includes(d.id)))
       .map((d) => slipTargetName_(d.store, d.name, period));
+    // Two files not yet under the standard name, to show renaming.
+    if (period === 'October 2026') {
+      const arjun = existing.findIndex((n) => /^IOI Arjun/.test(n));
+      existing[arjun] = 'Arjun - payslip Oct.pdf';
+      existing.push('scan_0042.pdf');
+    }
     return {
       period, employees, existing, unmatched: oct ? clone(UNMATCHED) : [],
       filledAt: oct ? '23 Oct, 10:05 am' : '24 Sep, 9:30 am',
@@ -169,6 +180,14 @@ window.DashboardPreview = (function () {
     };
   }
   const month = (period) => months[period] || (months[period] = build(period));
+  const PERIODS = ['October 2026', 'September 2026'];
+  const NO_FOLDERS = {};   // months set up without their Drive folders
+  const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const isoOf = (label) => label.split(' ')[1] + '-' + String(MONTHS.indexOf(label.split(' ')[0]) + 1).padStart(2, '0');
+  const labelOf = (iso) => MONTHS[Number(iso.slice(5, 7)) - 1] + ' ' + iso.slice(0, 4);
+  const configValue = (label) => CONFIG.find((r) => r.label === label).value;
+  const driveFiles = (m) => m.existing.map((n, i) => ({ name: n, url: '#', fileId: 'F' + i }));
+  const heldIds = (m) => m.employees.filter((e) => ['Sent', 'Review Required'].includes(e.status)).map((e) => e.id);
 
   function summarise(employees, store) {
     const pool = employees.filter((e) => store === 'all' || e.stores.includes(store === 'ss18' ? 'SS18' : 'IOI'));
@@ -215,7 +234,14 @@ window.DashboardPreview = (function () {
       const employees = clone(m.employees);
       return {
         preview: true,
-        period, periods: ['October 2026', 'September 2026'], updatedAt: stamp(), testMode,
+        period, periods: PERIODS.slice(), updatedAt: stamp(), testMode,
+        folders: { name: period, slip: !NO_FOLDERS[period], calc: !NO_FOLDERS[period], problem: '' },
+        months: (() => {
+          const latest = PERIODS.map(isoOf).sort().pop();
+          const y = Number(latest.slice(0, 4)), mo = Number(latest.slice(5, 7));
+          const next = (mo === 12 ? y + 1 : y) + '-' + String(mo === 12 ? 1 : mo + 1).padStart(2, '0');
+          return { current: isoOf(configValue('Current Payout Month') + ' ' + configValue('Current Payout Year')), latest, next, nextLabel: labelOf(next) };
+        })(),
         account: { name: 'Admin (preview)', email: 'admin@example.com' },
         summary: { all: summarise(employees, 'all'), ss18: summarise(employees, 'ss18'), ioi: summarise(employees, 'ioi') },
         monthSteps: ['Jibble hours', 'Rates', 'Slips', 'Prepare', 'Verify', 'Test email', 'Pre-Send Check', 'Send', 'Results'],
@@ -390,8 +416,108 @@ window.DashboardPreview = (function () {
       return { staff: DIRECTORY.map(staffView), message: d.name + ': saved in this preview only. The Staff Directory was not changed.' };
     },
 
+    addStaff(args) {
+      const p = args.person || {};
+      if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,19}$/.test(String(p.id || '').trim())) fail('Type the Employee ID, e.g. 031 (letters, numbers, no spaces). Nothing was added.');
+      if (!String(p.name || '').trim()) fail('Type the name. Nothing was added.');
+      if (dir(p.id.trim())) fail('Employee ID ' + p.id + ' is already in the Staff Directory. Nothing was added.');
+      if (DIRECTORY.some((x) => x.name.toLowerCase() === p.name.trim().toLowerCase())) fail('Someone named "' + p.name + '" is already in the Staff Directory. Nothing was added.');
+      DIRECTORY.push({ id: p.id.trim(), name: p.name.trim(), alias: p.alias || '', store: p.store || '', email: p.email || '',
+        ss18: p.ss18 || '', ioi: p.ioi || '', active: p.active !== false, rate: p.rate || '' });
+      return { staff: DIRECTORY.map(staffView), message: p.name.trim() + ' was added in this preview only. The Staff Directory was not changed.' };
+    },
+
+    deleteStaff(args) {
+      if (args.confirm !== 'DELETE') fail('Type DELETE to confirm.');
+      const d = dir(args.employeeId);
+      if (!d) fail('That Employee ID is not in the Staff Directory exactly once. Nothing was deleted.');
+      if (PEOPLE.some((p) => p.id === d.id)) fail(d.name + ' is on the October 2026 payroll, so they cannot be deleted now. Untick Active instead, or delete them after this month is finished.');
+      DIRECTORY.splice(DIRECTORY.indexOf(d), 1);
+      return { staff: DIRECTORY.map(staffView), message: d.name + ' was deleted in this preview only. The Staff Directory was not changed.' };
+    },
+
+    createMonthFolders(args) {
+      delete NO_FOLDERS[args.period];
+      return { message: 'Preview: the "' + args.period + '" folders would be created in Drive. Nothing was created.' };
+    },
+
+    setUpMonth(args) {
+      const label = labelOf(args.month);
+      if (args.fill) {
+        if (PERIODS.includes(label) && !args.replace) fail('"' + label + '" already exists. Tick "Replace it" to go ahead. Nothing was changed.');
+        if (!PERIODS.includes(label)) PERIODS.unshift(label);
+        delete months[label];
+        if (!args.folders) NO_FOLDERS[label] = true;
+      }
+      if (args.makeCurrent) {
+        CONFIG.find((r) => r.label === 'Current Payout Month').value = label.split(' ')[0];
+        CONFIG.find((r) => r.label === 'Current Payout Year').value = label.split(' ')[1];
+      }
+      return { period: label, message: 'Preview only: "' + label + '" was set up in this browser tab. Nothing in the spreadsheet, Drive or Jibble was touched.' };
+    },
+
+    listSlipFiles(args) {
+      const m = month(args.period);
+      return { folderOk: true, rows: slipPlanRenames_({ period: args.period, people: DIRECTORY, files: driveFiles(m), held: heldIds(m), picks: args.picks || {} }) };
+    },
+
+    renameSlips(args) {
+      const m = month(args.period);
+      const chosen = new Set(args.fileIds || []);
+      const rows = slipPlanRenames_({ period: args.period, people: DIRECTORY, files: driveFiles(m), held: heldIds(m), picks: args.picks || {} });
+      const renamed = [], skipped = [];
+      rows.forEach((r) => {
+        if (!chosen.has(r.fileId)) return;
+        if (r.state !== 'rename') { skipped.push({ name: r.name, reason: r.reason }); return; }
+        m.existing[Number(r.fileId.slice(1))] = r.target;
+        renamed.push({ from: r.name, to: r.target });
+      });
+      return { renamed, skipped, message: 'Preview only: nothing in Drive was renamed.' };
+    },
+
     getDocumentUrl() { return null; },
     getSheetUrl() { return null; },
+    sendPreview(args) {
+      const period = configValue('Current Payout Month') + ' ' + configValue('Current Payout Year');
+      const m = month(period);
+      const isTest = testMode || args.test === true;
+      const ready = m.employees.filter((e) => e.status === 'Ready' && e.verified && !e.issue);
+      return { ok: true, period, branch: 'both branches', isTest, canProceed: ready.length > 0, sender: 'sender@example.com', globalBlockers: [],
+        willSend: ready.map((e) => ({ name: e.name, employeeId: e.id, to: isTest ? 'test-inbox@example.com' : dir(e.id).email, intended: dir(e.id).email })),
+        cannotSend: m.employees.filter((e) => !ready.includes(e) && e.status !== 'Sent').map((e) => ({ name: e.name, reason: e.issue || 'Manager Verified not ticked.' })),
+        alreadySent: m.employees.filter((e) => e.status === 'Sent').map((e) => ({ name: e.name })),
+        text: ready.length ? 'WILL SEND (' + ready.length + ')' : 'Nobody is ready to send.' };
+    },
+    sendEmails(args) {
+      const rep = this.sendPreview(args);
+      if (rep.willSend.length !== args.count) fail('The list changed since you looked. Look at it again, then send. Nothing was sent.');
+      if (!rep.isTest) {
+        const m = month(rep.period);
+        rep.willSend.forEach((w) => { const e = m.employees.find((x) => x.id === w.employeeId); e.status = 'Sent'; e.pdf = 'Sent'; e.canEdit = false; });
+      }
+      return { isTest: rep.isTest, sent: rep.willSend.length,
+        text: 'Preview only: no email was sent. ' + rep.willSend.length + (rep.isTest ? ' test' : ' LIVE') + ' email(s) would have gone.' };
+    },
+
+    checkSystem() {
+      return { period: configValue('Current Payout Month') + ' ' + configValue('Current Payout Year'), canPrepare: true,
+        findings: [{ stage: 'quality', level: 'warn', title: 'Test Mode is ' + (testMode ? 'ON' : 'OFF'), detail: 'Preview: invented result.' }],
+        note: 'Gmail permission and who may send are checked by Check System in the spreadsheet.' };
+    },
+    planIdFills() {
+      return { period: 'October 2026', items: [{ row: 12, name: 'Rina Kaur', current: '', proposed: 'MCH-030' }],
+        refusals: [{ label: 'Row 20 (Rina K.)', reason: 'Not in the Staff Directory under this name.' }] };
+    },
+    applyIdFills(args) { return { applied: args.rows.length, skipped: 0, message: 'Preview only: ' + args.rows.length + ' Employee ID filled in this browser tab. The sheet was not changed.' }; },
+    deleteMonthTab(args) {
+      if (args.typed !== args.period) fail('Type the tab\'s name exactly ("' + args.period + '") to delete it.');
+      if (args.period === 'September 2026') fail('"September 2026" was made by hand, not by the Jibble menu, so it is not deleted from here. Nothing was deleted.');
+      if (month(args.period).employees.some((e) => e.payment === 'Paid')) fail('"' + args.period + '" has people marked Paid, so it is not deleted. Nothing was deleted.');
+      PERIODS.splice(PERIODS.indexOf(args.period), 1);
+      delete months[args.period];
+      return { message: 'Preview only: "' + args.period + '" was deleted in this browser tab. The spreadsheet was not changed.' };
+    },
+
     runPreparePayout() { return { ok: false, preview: true, message: 'Preview: Prepare Payout did not run. When connected, this runs the existing Prepare Payout. It never sends an email.' }; }
   };
 })();

@@ -250,3 +250,55 @@ function slipMissingPeople_(payroll, people, existing, rows, periodLabel) {
   });
   return payroll.filter(function (p) { return !has[p.id]; });
 }
+
+/**
+ * The slips ALREADY in the month's folder: who each one is for, and the
+ * standard name it would get (owner, 2026-10-27: view every slip, and
+ * rename them to the standard name). Changes nothing.
+ *
+ *   input.period  'October 2026'
+ *   input.people  Staff Directory: [{ id, name, alias, store }]
+ *   input.files   [{ name, url, fileId }] in the folder now
+ *   input.held    Employee IDs whose payout is Sent or Review Required
+ *   input.picks   optional { fileId: employeeId } chosen by the admin
+ *
+ * Returns rows: { fileId, name, url, state, reason, employeeId, employeeName, target }
+ *   state: 'standard' (already right) · 'rename' (will get `target`) ·
+ *          'unknown' (no single person; pick one) · 'blocked' (cannot be renamed; see reason)
+ */
+function slipPlanRenames_(input) {
+  var people = input.people || [];
+  var byId = {};
+  people.forEach(function (p) { byId[p.id] = p; });
+  var held = {};
+  (input.held || []).forEach(function (id) { held[id] = true; });
+  var taken = {};
+  (input.files || []).forEach(function (f) { taken[slipKey_(f.name)] = f.fileId; });
+  var picks = input.picks || {};
+
+  return (input.files || []).map(function (f) {
+    var row = { fileId: f.fileId, name: f.name, url: f.url, state: '', reason: '', employeeId: '', employeeName: '', target: '' };
+    var id = slipIdentify_(f.name, people, input.period);
+    var person = id.person;
+    if (picks[f.fileId] && id.status !== SLIP_STATUS_.notPdf && id.status !== SLIP_STATUS_.wrongMonth) {
+      person = byId[picks[f.fileId]] || null;
+    }
+    if (!person) {
+      row.state = id.status === SLIP_STATUS_.pick ? 'unknown' : 'blocked';
+      row.reason = id.reason;
+      return row;
+    }
+    row.employeeId = person.id;
+    row.employeeName = person.name;
+    if (!person.store) { row.state = 'blocked'; row.reason = person.name + ' has no Store in the Staff Directory.'; return row; }
+    row.target = slipTargetName_(person.store, person.name, input.period);
+    if (slipClean_(f.name) === row.target) { row.state = 'standard'; row.reason = 'Already the standard name.'; return row; }
+    if (held[person.id]) { row.state = 'blocked'; row.reason = person.name + ' was already sent, so the slip is left as it is.'; return row; }
+    var owner = taken[slipKey_(row.target)];
+    if (owner && owner !== f.fileId) { row.state = 'blocked'; row.reason = 'Another file already has the standard name for ' + person.name + '.'; return row; }
+    taken[slipKey_(row.target)] = f.fileId;
+    row.state = 'rename';
+    row.reason = picks[f.fileId] ? 'You picked this person.' : id.reason;
+    return row;
+  });
+}
