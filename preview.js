@@ -77,8 +77,9 @@ window.DashboardPreview = (function () {
     { group: 'Drive', protected: true, label: 'Payment Calculation Root Folder', value: '1QrStUvWxYz012345', kind: 'folder', note: 'Drive folder ID.' },
     { group: 'Drive', protected: true, label: 'Company Logo File ID', value: '1LoGoFiLeId000000', kind: 'file' },
     { group: 'Drive', protected: true, label: 'Payout Background File ID', value: '', kind: 'file' },
-    { group: 'Who may send', label: 'Authorized Sender Email', value: 'sender@example.com', locked: true, note: 'Change it in the spreadsheet: it decides who can send LIVE emails.' },
-    { group: 'Who may send', label: 'Authorized Operator Emails', value: 'operator@example.com', locked: true, note: 'Change it in the spreadsheet.' }
+    { group: 'Who may send', label: 'Authorized Sender Email', value: 'sender@example.com', kind: 'emails', protected: true, note: 'Emails separated by commas: the accounts that may send LIVE. The website sends as the account that set it up.' },
+    { group: 'Who may send', label: 'Authorized Operator Emails', value: 'operator@example.com', kind: 'emails', protected: true, note: 'Emails separated by commas: these may send TEST emails only.' },
+    { group: 'Who may send', label: 'Payout Store Scope', value: 'ALL', note: 'Not used by the payout today.' }
   ];
   const months = {};
   const sendLog = [
@@ -380,6 +381,7 @@ window.DashboardPreview = (function () {
         const row = CONFIG.find((r) => r.label === k);
         if (!row) fail('"' + k + '" is not a Configuration setting.');
         if (row.locked) fail(k + ' cannot be changed from the dashboard.');
+        if (row.kind === 'emails' && String(changes[k]).split(',').some((e) => e.trim() && !/^[^s@]+@[^s@]+.[^s@]+$/.test(e.trim()))) fail(k + ' must be email addresses separated by commas, or blank.');
       });
       keys.forEach((k) => { CONFIG.find((r) => r.label === k).value = String(changes[k]); });
       return { message: keys.length + ' setting' + (keys.length === 1 ? '' : 's') + ' saved in this preview only. The Configuration tab was not changed.' };

@@ -881,6 +881,7 @@
   function cfgProblem(row, v) {
     const s = String(v == null ? '' : v).trim();
     if (row.kind === 'email' && s && !EMAIL_RE.test(s)) return row.label + ' must be an email address, or blank.';
+    if (row.kind === 'emails' && s && s.split(',').some((e) => !EMAIL_RE.test(e.trim()))) return row.label + ' must be email addresses separated by commas, or blank.';
     if (row.kind === 'year' && !/^20\d{2}$/.test(s)) return row.label + ' must be a year like 2026.';
     if (row.kind === 'month' && !MONTHS.includes(s)) return 'Choose the ' + row.label + '.';
     if ((row.kind === 'folder' || row.kind === 'file') && s && !/^[A-Za-z0-9_-]{10,}$/.test(s)) return row.label + ' must be a Google Drive ID (the long code in the link), or blank.';
@@ -919,7 +920,7 @@
               const id = 'cfg-' + r.label.replace(/\W+/g, '-');
               return `
               <div class="cfg-row${c.editing && !r.locked && String(c.draft[r.label]).trim() !== String(r.value == null ? '' : r.value) ? ' changed' : ''}">
-                <div class="cfg-label"><label for="${id}">${esc(r.label)}${r.protected ? ' <span class="badge b-neutral" title="Needs a fresh Google sign-in to change">Protected</span>' : ''}</label>${r.note ? `<span class="hint">${esc(r.note)}</span>` : ''}</div>
+                <div class="cfg-label"><label for="${id}">${esc(r.label)}${r.protected ? ' <span class="badge b-neutral" title="Asks for the password again before saving">Protected</span>' : ''}</label>${r.note ? `<span class="hint">${esc(r.note)}</span>` : ''}</div>
                 <div class="cfg-value">${r.locked
                   ? `<span class="cfg-locked">${icon.lock.replace('width="18" height="18"', 'width="14" height="14"')}<span>${r.value === '' || r.value == null ? '<span class="muted">Blank</span>' : esc(r.value)}</span></span>`
                   : c.editing ? field(r)

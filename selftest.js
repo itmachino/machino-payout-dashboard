@@ -184,7 +184,11 @@
     // 7b. Configuration editing
     $('[data-action="cfg-edit"]').click();
     check('settings become editable', await until(() => $$('[data-cfg]').length >= 10));
-    check('Authorized Sender stays locked', !$('[data-cfg="Authorized Sender Email"]') && !$('[data-cfg="Test Mode"]'));
+    check('the senders and store scope are editable; Test Mode stays on its switch', !!$('[data-cfg="Authorized Sender Email"]') &&
+      !!$('[data-cfg="Authorized Operator Emails"]') && !!$('[data-cfg="Payout Store Scope"]') && !$('[data-cfg="Test Mode"]'));
+    input($('[data-cfg="Authorized Sender Email"]'), 'a@example.com, not-an-email');
+    check('a bad address in the Authorized Sender list blocks saving', await until(() => $('#cfg-save').disabled && /separated by commas/.test($('#cfg-problem').textContent)));
+    input($('[data-cfg="Authorized Sender Email"]'), 'sender@example.com');
     input($('[data-cfg="Sender Position"]'), 'Area Manager');
     input($('[data-cfg="Test Email"]'), 'not an email');
     check('bad email blocks saving', $('#cfg-save').disabled && !$('#cfg-problem').hidden);
@@ -196,8 +200,8 @@
     $('#cfg-go').click();
     check('settings saved and read back', await until(() => !P.state.cfg.editing && P.data.config.find((r) => r.label === 'Sender Position').value === 'Area Manager'));
     refused = false;
-    try { window.DashboardPreview.saveConfiguration({ changes: { 'Authorized Sender Email': 'x@example.com' } }); } catch (e) { refused = true; }
-    check('backend refuses the Authorized Sender', refused);
+    try { window.DashboardPreview.saveConfiguration({ changes: { 'Authorized Sender Email': 'x@example.com, nope' } }); } catch (e) { refused = true; }
+    check('backend refuses a bad Authorized Sender address', refused);
 
     // 8. Link an unmatched Jibble person
     check('Jibble page opens', await go('#checks', 'Jibble & Documents'));
