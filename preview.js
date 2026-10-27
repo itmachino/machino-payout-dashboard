@@ -91,6 +91,9 @@ window.DashboardPreview = (function () {
   ];
 
   const dir = (id) => DIRECTORY.find((d) => d.id === id);
+  // What the page shows for one Staff Directory row (the same fields as the backend).
+  const staffView = (d) => ({ id: d.id, internalId: 'S' + d.id.slice(-3), name: d.name, alias: d.alias, email: d.email,
+    store: d.store, active: d.active !== false, rate: d.rate === undefined ? '9.50' : d.rate, ss18: d.ss18, ioi: d.ioi });
   /** Like the backend: refuse when what the admin saw no longer matches. */
   const changedSince = (e, expected) => !expected || Object.keys(expected).some((k) =>
     JSON.stringify(expected[k]) !== JSON.stringify(k === 'verified' ? !!e[k] : (e[k] === undefined ? '' : e[k])));
@@ -237,7 +240,7 @@ window.DashboardPreview = (function () {
           warnings: employees.filter((e) => e.attendance.some((d) => d.flag)).map((e) => ({ tag: 'No clock-out', store: e.stores[0], title: e.name + ' has ' + e.attendance.filter((d) => d.flag).length + ' days without a clock-out', next: 'add the clock-outs in Jibble, then fill the month again.', employeeId: e.id }))
             .concat(employees.filter((e) => e.lines.some((l) => l[3] == null)).map((e) => ({ tag: 'No rate', store: e.stores[0], title: e.name + ' has no Hourly Rate', next: 'add the rate in the Staff Directory, then fill the month again.', employeeId: e.id })))
         },
-        staff: DIRECTORY.map((d) => ({ id: d.id, name: d.name, store: d.store, ss18: d.ss18, ioi: d.ioi })),
+        staff: DIRECTORY.map(staffView),
         claimTypes: CLAIM_TYPES_IN_SHEET.slice(),
         documents: [
           { ok: true, title: 'Payroll tab “' + period + '”', note: 'Found and readable. ' + employees.length + ' people.' },
@@ -366,6 +369,25 @@ window.DashboardPreview = (function () {
       if (e.total == null) fail(e.name + '\'s Total Payout is blank, so there is nothing to verify yet.');
       e.verified = !!args.verified;
       return { employee: clone(e), message: e.name + (e.verified ? ' verified' : ' no longer verified') + ' in this preview only. The sheet was not changed.' };
+    },
+
+    saveStaff(args) {
+      const d = dir(args.employeeId);
+      if (!d) fail('That Employee ID is not in the Staff Directory exactly once. Nothing was changed.');
+      const now = staffView(d);
+      const c = args.changes || {};
+      if ('id' in c || 'internalId' in c) fail('Employee ID cannot be changed here.');
+      if (Object.keys(args.expected || {}).some((k) => JSON.stringify(args.expected[k]) !== JSON.stringify(now[k]))) {
+        fail(now.name + ' changed in the Staff Directory since you opened it. Refresh, then make your change again. Nothing was saved.');
+      }
+      if ('name' in c && !String(c.name).trim()) fail('Name cannot be blank. Nothing was saved.');
+      if ('name' in c && DIRECTORY.some((x) => x !== d && x.name.toLowerCase() === String(c.name).trim().toLowerCase())) {
+        fail('Another Staff Directory row already has the name "' + c.name + '". Nothing was saved.');
+      }
+      if (c.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.email)) fail('"' + c.email + '" is not an email address. Nothing was saved.');
+      if (c.rate && !/^\d+(\.\d{1,2})?$/.test(c.rate)) fail('Hourly Rate must be an amount like 10 or 10.50. Nothing was saved.');
+      Object.keys(c).forEach((k) => { d[k] = typeof c[k] === 'string' ? c[k].trim() : c[k]; });
+      return { staff: DIRECTORY.map(staffView), message: d.name + ': saved in this preview only. The Staff Directory was not changed.' };
     },
 
     getDocumentUrl() { return null; },

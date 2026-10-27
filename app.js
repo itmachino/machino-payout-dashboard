@@ -20,7 +20,13 @@
    * ===================================================================== */
   const CFG = window.DASHBOARD_CONFIG || {};
   const CONNECTED = !!CFG.apiUrl;
-  let session = null;      // the backend session key, memory only
+  // The backend session key. Kept in this browser (owner, 2026-10-27: a refresh
+  // must not sign you out). It is only a random key: no payroll data is stored,
+  // and the server still ends it after 30 minutes unused, 8 hours, or Sign out.
+  const SESSION_KEY = 'machino-dashboard-session';
+  const remember = (s) => { try { if (s) localStorage.setItem(SESSION_KEY, s); else localStorage.removeItem(SESSION_KEY); } catch (e) { /* storage blocked: sign in each time */ } };
+  const recalled = () => { try { return localStorage.getItem(SESSION_KEY); } catch (e) { return null; } };
+  let session = CONNECTED ? recalled() : null;
 
   function call(action, args) {
     if (!CONNECTED) {
@@ -38,7 +44,7 @@
     }).then((body) => {
       if (!body.ok) {
         // signIn: the sign-in is no longer valid. reauth: a protected setting needs a fresh sign-in.
-        if (body.signIn || body.reauth) { session = null; DATA = null; showSignIn(body.message); }
+        if (body.signIn || body.reauth) { session = null; remember(null); DATA = null; showSignIn(body.message); }
         throw new Error(body.message || 'Something went wrong.');
       }
       return body.result;
@@ -76,6 +82,7 @@
         return;
       }
       session = body.result.session;
+      remember(session);
       signInEl.hidden = true;
       document.querySelector('.app').hidden = false;
       load(state.period, { full: true });
@@ -88,6 +95,7 @@
   function signOut() {
     const ending = session;
     session = null;
+    remember(null);
     DATA = null;
     if (ending) post({ action: 'logout', session: ending }).catch(() => {});
     showSignIn('You are signed out.');
@@ -103,6 +111,7 @@
     openId: null, editing: null, draft: null, saving: false, saveError: null,
     branch: 'both',
     history: { q: '', period: 'all', mode: 'all' },
+    staff: { q: '', show: 'active', editId: null },
     slips: { files: [], plan: null, planning: false, saving: false, result: null, error: null },
     links: {},
     cfg: { editing: false, draft: null, saving: false },
@@ -117,9 +126,10 @@
   const STATUS_ORDER = { 'Review Required': 0, 'Needs Attention': 1, 'Failed': 1, 'Ready': 2, 'Sent': 3 };
   const statusBadge = (s) => `<span class="badge ${STATUS_CLASS[s] || 'b-attention'}">${esc(s)}</span>`;
   const storeBadges = (stores) => stores.map((s) => `<span class="badge ${s === 'SS18' ? 'b-ss18' : 'b-ioi'}">${esc(s)}</span>`).join('');
+  // LIVE is the normal setting (owner, 2026-10-27): only Test Mode gets a badge.
   const modeBadge = () => DATA.testMode
     ? '<a class="badge b-test mode-pill" href="#settings" title="Change in Settings">TEST MODE</a>'
-    : '<a class="badge b-live mode-pill" href="#settings" title="Change in Settings">LIVE MODE</a>';
+    : '';
   const money = (v) => v == null ? '<span class="blank">Blank</span>' : esc(v);
   const dash = (v) => v == null || v === '' ? '—' : esc(v);
   const plain = (v) => v == null ? '' : String(v).replace(/[^0-9.]/g, '');
@@ -160,7 +170,8 @@
   const refreshBtn = () => `<button type="button" class="icon-btn" data-action="refresh" aria-label="Refresh data" title="Refresh · last updated ${esc(DATA.updatedAt)}">${icon.refresh}</button>`;
   const sampleTag = () => DATA.preview ? '<span class="sample-tag">Preview · invented data</span>' : '';
   const toastHTML = () => state.toast ? `<div class="toast ${esc(state.toast.kind || '')}" role="status">${state.toast.kind === 'error' ? icon.alert : icon.info}<span class="grow">${esc(state.toast.text)}</span><button type="button" class="link-btn" data-action="dismiss">Dismiss</button></div>` : '';
-  const liveStrip = () => DATA.testMode ? '' : `<div class="live-strip" role="status">${icon.alert}<span><strong>LIVE MODE.</strong> Test Mode is off: a send from the spreadsheet emails real employees. <a href="#settings">Turn Test Mode back on</a></span></div>`;
+  // The LIVE warning strip was removed (owner, 2026-10-27: LIVE is the normal setting).
+  const liveStrip = () => '';
   function toast(text, kind) { state.toast = { text, kind }; render(); }
   const errText = (err) => (err && err.message) || String(err);
 
@@ -188,13 +199,9 @@
     renderDrawer();
   }
   /** The top strip: DEMO with invented data, or REAL PAYROLL (read-only until changes are switched on). */
+  /** The top strip shows only in the DEMO (owner, 2026-10-27: no banner on the real dashboard). */
   function showMode() {
-    const bar = document.getElementById('demo-banner');
-    if (!CONNECTED) { bar.hidden = false; return; }
-    bar.hidden = false;
-    bar.classList.add('real');
-    bar.innerHTML = '<strong>REAL PAYROLL</strong><span>Connected to the payout spreadsheet. ' +
-      (DATA.writesEnabled ? 'Changes are saved to the sheet.' : 'Read-only: changes are switched off.') + '</span>';
+    document.getElementById('demo-banner').hidden = CONNECTED;
   }
   function setRefreshing(on) {
     document.querySelectorAll('[data-action="refresh"]').forEach((b) => {
@@ -1261,14 +1268,111 @@
   }
 
   /* ---------- Router ---------- */
-  const ROUTES = { overview, payroll, slips, checks, settings, send, history };
-  const TITLES = { overview: 'Overview', payroll: 'Payroll Management', slips: 'Payment Slips', checks: 'Jibble & Documents', settings: 'Settings', send: 'Send Center', history: 'History' };
+  /* ---------- Staff Directory (owner, 2026-10-27): see and edit, one person at a time ---------- */
+  const STAFF_FIELDS = [
+    ['name', 'Name'], ['alias', 'Payment Slip Name Alias'], ['email', 'Employee Email'], ['store', 'Store'],
+    ['active', 'Active'], ['rate', 'Hourly Rate'], ['ss18', 'Jibble ID (SS18)'], ['ioi', 'Jibble ID (IOI)']
+  ];
+  const staffRow = (id) => DATA.staff.find((s) => s.id === id);
+  function staffPage() {
+    const st = state.staff;
+    const q = st.q.trim().toLowerCase();
+    const rows = DATA.staff
+      .filter((s) => st.show === 'all' || (st.show === 'active' ? s.active : !s.active))
+      .filter((s) => !q || [s.name, s.alias, s.id, s.email].some((v) => String(v || '').toLowerCase().includes(q)))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    return `
+      <header class="page-head">
+        <div class="title-block"><h1>Staff Directory</h1><span class="small muted">The Staff Directory tab of Retail Payout 2026. Changes are written there.</span></div>
+        <div class="tools">${refreshBtn()}</div>
+      </header>
+      ${toastHTML()}
+      <div class="card card-body" style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:16px">
+        <label class="field" style="flex:1 1 240px">Search<input class="input" type="search" id="staff-q" value="${esc(st.q)}" placeholder="Name, Employee ID or email"></label>
+        <div class="field"><span>Show</span>${seg('staff-show', [['active', 'Active'], ['inactive', 'Not active'], ['all', 'Everyone']], st.show, 'Show')}</div>
+      </div>
+      <section class="card raised" aria-labelledby="sdt">
+        <div class="card-head"><h2 id="sdt">People</h2><span class="small muted">${rows.length} of ${DATA.staff.length}</span></div>
+        ${rows.length ? `<div class="table-wrap"><table class="log">
+          <thead><tr><th scope="col">Name</th><th scope="col">Employee ID</th><th scope="col">Store</th><th scope="col">Email</th><th scope="col" class="right">Hourly Rate</th><th scope="col">Jibble IDs</th><th scope="col"><span class="sr-only">Edit</span></th></tr></thead>
+          <tbody>${rows.map((s) => `<tr>
+            <th scope="row"><div style="display:flex;flex-direction:column;gap:2px"><strong>${esc(s.name)}</strong>${s.alias ? `<span class="small muted">Slip name: ${esc(s.alias)}</span>` : ''}${s.active ? '' : '<span class="badge b-neutral" style="align-self:flex-start">Not active</span>'}</div></th>
+            <td class="num">${esc(s.id)}</td>
+            <td>${s.store ? storeBadges([s.store]) : '<span class="muted">—</span>'}</td>
+            <td style="overflow-wrap:anywhere">${s.email ? esc(s.email) : '<span class="blank">Missing</span>'}</td>
+            <td class="right num" style="white-space:nowrap">${s.rate ? 'RM ' + esc(s.rate) : '<span class="blank">Blank</span>'}</td>
+            <td class="small">${[s.ss18 && 'SS18 ' + s.ss18, s.ioi && 'IOI ' + s.ioi].filter(Boolean).map(esc).join('<br>') || '<span class="muted">—</span>'}</td>
+            <td><button type="button" class="btn btn-secondary btn-sm" data-staff-edit="${esc(s.id)}">Edit</button></td>
+          </tr>`).join('')}</tbody></table></div>`
+        : `<div class="empty"><h3>Nobody found</h3><span class="muted small">Try another name, or show everyone.</span></div>`}
+        <p class="small muted" style="margin:0;padding:0 24px 20px;line-height:1.5">Employee ID cannot be changed here: it is how the payout finds each person. New people are added in the spreadsheet.</p>
+      </section>`;
+  }
+  function openStaff(id) {
+    const s = staffRow(id);
+    if (!s) return;
+    state.staff.editId = id;
+    document.getElementById('staff-title').textContent = 'Edit ' + s.name;
+    const stores = ['SS18', 'IOI'].concat(s.store && !['SS18', 'IOI'].includes(s.store) ? [s.store] : []);
+    document.getElementById('staff-body').innerHTML = `
+      <div class="form">
+        <div class="field"><span>Employee ID</span><div class="locked"><span>${esc(s.id)}</span><span class="calc">${icon.lock.replace('width="18" height="18"', 'width="11" height="11"')}Not changeable</span></div></div>
+        <div class="field"><label for="sf-name">Name</label><input class="input" id="sf-name" value="${esc(s.name)}"></div>
+        <div class="field"><label for="sf-alias">Payment Slip Name Alias</label><input class="input" id="sf-alias" value="${esc(s.alias)}"></div>
+        <div class="field"><label for="sf-email">Employee Email</label><input class="input" type="email" id="sf-email" value="${esc(s.email)}"></div>
+        <div class="field"><label for="sf-store">Store</label><select class="select" id="sf-store"><option value="">—</option>${stores.map((x) => `<option${x === s.store ? ' selected' : ''}>${esc(x)}</option>`).join('')}</select></div>
+        <div class="field"><label for="sf-rate">Hourly Rate</label><div class="money-in"><span>RM</span><input class="input" id="sf-rate" inputmode="decimal" value="${esc(s.rate)}"></div></div>
+        <div class="field"><label for="sf-ss18">Jibble ID (SS18)</label><input class="input" id="sf-ss18" value="${esc(s.ss18)}"></div>
+        <div class="field"><label for="sf-ioi">Jibble ID (IOI)</label><input class="input" id="sf-ioi" value="${esc(s.ioi)}"></div>
+        <label class="field" style="flex-direction:row;align-items:center;gap:10px"><input type="checkbox" id="sf-active"${s.active ? ' checked' : ''}> Active</label>
+      </div>
+      <p class="small muted" style="margin:0;line-height:1.5">Changing the email changes where this person's payout email goes, so it asks for the password again if you signed in more than 5 minutes ago.</p>
+      <div class="notice error" id="staff-error" hidden>${icon.alert}<span class="grow"></span></div>
+      <div class="dialog-actions">
+        <button type="button" class="btn btn-secondary" data-close="staff-dialog">Cancel</button>
+        <button type="button" class="btn btn-primary" id="staff-save">Save</button>
+      </div>`;
+    document.getElementById('staff-dialog').showModal();
+  }
+  async function saveStaff() {
+    const s = staffRow(state.staff.editId);
+    if (!s) return;
+    const val = (k) => k === 'active' ? document.getElementById('sf-active').checked : document.getElementById('sf-' + k).value.trim();
+    const changes = {};
+    STAFF_FIELDS.forEach(([k]) => { if (val(k) !== (k === 'active' ? s.active : String(s[k] || ''))) changes[k] = val(k); });
+    const box = document.getElementById('staff-error');
+    if (!Object.keys(changes).length) { document.getElementById('staff-dialog').close(); return; }
+    const btn = document.getElementById('staff-save');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner sm" aria-hidden="true"></span>Saving…';
+    try {
+      const expected = {};
+      STAFF_FIELDS.forEach(([k]) => { expected[k] = s[k]; });
+      const res = await call('saveStaff', { employeeId: s.id, expected, changes });
+      DATA.staff = res.staff;
+      document.getElementById('staff-dialog').close();
+      toast(res.message || 'Saved.', 'ok');
+    } catch (err) {
+      box.hidden = false;
+      box.querySelector('.grow').textContent = 'Not saved: ' + errText(err);
+      btn.disabled = false; btn.textContent = 'Save';
+    }
+  }
+
+  const ROUTES = { overview, payroll, slips, checks, settings, send, history, staff: staffPage };
+  const TITLES = { overview: 'Overview', payroll: 'Payroll Management', slips: 'Payment Slips', checks: 'Jibble & Documents', settings: 'Settings', send: 'Send Center', history: 'History', staff: 'Staff Directory' };
   const view = document.getElementById('view');
   function currentRoute() {
     const r = (location.hash || '#overview').slice(1);
     return ROUTES[r] ? r : 'overview';
   }
+  /** Typing in a search box redraws once the typing pauses, not on every key. */
+  let renderTimer = null;
+  function renderSoon() {
+    clearTimeout(renderTimer);
+    renderTimer = setTimeout(() => render(), 180);
+  }
   function render(opts) {
+    clearTimeout(renderTimer);
     if (CONNECTED && !session) { view.innerHTML = ''; return; }   // signed out: draw nothing
     if (state.loading) { view.innerHTML = '<div class="loading"><span class="spinner" aria-hidden="true"></span>Loading payroll information…</div>'; return; }
     if (!DATA) {
@@ -1356,6 +1460,7 @@
 
     const closeD = t.closest('[data-close]');
     if (closeD) { document.getElementById(closeD.dataset.close).close(); return; }
+    if (t.closest('#staff-save')) { saveStaff(); return; }
 
     // Drawer
     if (t.closest('[data-action="close-drawer"]')) { closeDrawer(); return; }
@@ -1403,6 +1508,8 @@
   view.addEventListener('click', (e) => {
     const t = e.target;
     if (t.closest('.vcell')) return; // the Verified tick box, not "open this person"
+    const staffEdit = t.closest('[data-staff-edit]');
+    if (staffEdit) { openStaff(staffEdit.dataset.staffEdit); return; }
     const segBtn = t.closest('[data-seg]');
     if (segBtn) {
       const g = segBtn.dataset.seg, v = segBtn.dataset.value;
@@ -1410,6 +1517,7 @@
       if (g === 'pm-store') state.payroll.store = v;
       if (g === 'branch') state.branch = v;
       if (g === 'history-mode') state.history.mode = v;
+      if (g === 'staff-show') state.staff.show = v;
       render();
       const again = view.querySelector(`[data-seg="${g}"][data-value="${v}"]`);
       if (again) again.focus();
@@ -1466,8 +1574,9 @@
   });
 
   view.addEventListener('input', (e) => {
-    if (e.target.id === 'pm-q') { state.payroll.q = e.target.value; render(); }
-    if (e.target.id === 'history-q') { state.history.q = e.target.value; render(); }
+    if (e.target.id === 'pm-q') { state.payroll.q = e.target.value; renderSoon(); }
+    if (e.target.id === 'history-q') { state.history.q = e.target.value; renderSoon(); }
+    if (e.target.id === 'staff-q') { state.staff.q = e.target.value; renderSoon(); }
     if (e.target.dataset.cfg && state.cfg.draft) {
       const t = e.target, row = DATA.config.find((r) => r.label === t.dataset.cfg);
       state.cfg.draft[row.label] = t.value;
@@ -1591,8 +1700,13 @@
 
   const addScript = (src, onload) => { const s = document.createElement('script'); s.src = src; if (onload) s.onload = onload; document.body.appendChild(s); };
   if (CONNECTED) {
-    // Real payroll: the sign-in screen only. Nothing is fetched until both checks pass.
-    showSignIn('');
+    // Real payroll. A session remembered from before a refresh is tried first (the server
+    // still checks it); otherwise the sign-in screen only, and nothing is fetched.
+    if (session) {
+      signInEl.hidden = true;
+      document.querySelector('.app').hidden = false;
+      load(null, { full: true });
+    } else showSignIn('');
   } else {
     // DEMO: the invented data is loaded only here.
     document.getElementById('demo-banner').hidden = false;

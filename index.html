@@ -456,6 +456,7 @@ kbd { display: inline-block; min-width: 20px; padding: 0 5px; border: 1px solid 
 .cfg-editing { border-color: var(--brown); }
 @media (max-width: 760px) { .cfg-row { grid-template-columns: minmax(0, 1fr); } .cfg-group { padding-left: 16px; padding-right: 16px; } }
 #email-dialog { width: min(720px, calc(100vw - 32px)); }
+#staff-dialog { width: min(640px, calc(100vw - 32px)); }
 @media (max-width: 760px) { .list-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 40px; } .mode-row { padding: 16px; } }
 </style>
 </head>
@@ -494,6 +495,9 @@ kbd { display: inline-block; min-width: 20px; padding: 0 5px; border: 1px solid 
         <a href="#slips" data-route="slips">
           <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M12 18v-6M9 15l3-3 3 3"/></svg>
           Payment Slips<span class="nav-count" id="nav-slips" hidden></span></a>
+        <a href="#staff" data-route="staff">
+          <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2.5"/><path d="M5.5 16.5c.6-1.8 2-2.8 3.5-2.8s2.9 1 3.5 2.8"/><path d="M15 9h3M15 13h3"/></svg>
+          Staff Directory</a>
         <a href="#send" data-route="send">
           <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/></svg>
           Send Center</a>
@@ -607,6 +611,12 @@ kbd { display: inline-block; min-width: 20px; padding: 0 5px; border: 1px solid 
       <button type="button" class="btn btn-primary" id="cfg-go">Save to Configuration</button>
     </div>
   </div>
+</dialog>
+
+<!-- Staff Directory: edit one person -->
+<dialog id="staff-dialog" aria-labelledby="staff-title">
+  <div class="dialog-head"><h2 id="staff-title">Edit</h2><button type="button" class="icon-btn" data-close="staff-dialog" aria-label="Close">✕</button></div>
+  <div class="dialog-body" id="staff-body"></div>
 </dialog>
 
 <!-- Email preview -->

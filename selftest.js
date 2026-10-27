@@ -43,10 +43,11 @@
     check('11 employees listed', $$('.emp-table tbody tr').length === 11, $$('.emp-table tbody tr').length);
     check('store totals shown', $$('.store-totals > div').length === 3);
     input($('#pm-q'), 'tan');
-    check('search by name', $$('.emp-table tbody tr').length === 1, $$('.emp-table tbody tr').length);
+    check('search by name', await until(() => $$('.emp-table tbody tr').length === 1), $$('.emp-table tbody tr').length);
     input($('#pm-q'), 'mch-02');
-    check('search by Employee ID', $$('.emp-table tbody tr').length === 4,$$('.emp-table tbody tr').length);
+    check('search by Employee ID', await until(() => $$('.emp-table tbody tr').length === 4), $$('.emp-table tbody tr').length);
     input($('#pm-q'), '');
+    await until(() => $$('.emp-table tbody tr').length === 11);
     $('[data-status-tile="slip"]').click();
     check('missing-slip filter', $$('.emp-table tbody tr').length === 4, $$('.emp-table tbody tr').length);
     $('[data-status-tile="all"]').click();
@@ -173,7 +174,7 @@
     check('LIVE enables the button', !$('#test-off-go').disabled);
     $('#test-off-go').click();
     check('Test Mode OFF read back', await until(() => P.data.testMode === false && $('#tm-title').textContent === 'Test Mode is OFF'));
-    check('LIVE strip and badge shown', $('.live-strip') && $('.mode-pill').textContent === 'LIVE MODE');
+    check('LIVE is the normal setting: no warning strip, no LIVE badge (owner)', !$('.live-strip') && !$('.mode-pill'));
     var refused = false;
     try { window.DashboardPreview.setTestMode({ on: false }); } catch (e) { refused = true; }
     check('backend refuses OFF without LIVE', refused);
@@ -210,6 +211,27 @@
     refused = false;
     try { window.DashboardPreview.linkJibblePerson({ store: 'IOI', jibbleId: 'IOI-0301', employeeId: 'MCH-014' }); } catch (e) { refused = true; }
     check('never overwrites an existing Jibble ID', refused);
+
+    // 8b. Staff Directory: see and edit one person
+    check('Staff Directory opens', await go('#staff', 'Staff Directory'));
+    check('everyone active is listed', $$('.log tbody tr').length === P.data.staff.filter((s) => s.active).length);
+    input($('#staff-q'), 'arjun');
+    check('search narrows after typing pauses', await until(() => $$('.log tbody tr').length === 1));
+    $('[data-staff-edit="MCH-024"]').click();
+    check('edit opens with the current values', await until(() => $('#staff-dialog').open && $('#sf-name').value === 'Arjun a/l Pillai'));
+    check('Employee ID is shown but not editable', !$('#sf-id') && /MCH-024/.test($('#staff-body').textContent));
+    $('#sf-email').value = 'not an email';
+    $('#staff-save').click();
+    check('a bad email is refused, the window stays open', await until(() => !$('#staff-error').hidden && $('#staff-dialog').open));
+    $('#sf-email').value = 'arjun.new@example.com';
+    $('#sf-rate').value = '11.50';
+    $('#staff-save').click();
+    check('saved: new email and rate shown', await until(() => !$('#staff-dialog').open && /arjun\.new@example\.com/.test($('#view').textContent) && /RM 11\.50/.test($('#view').textContent)));
+    refused = false;
+    try { window.DashboardPreview.saveStaff({ employeeId: 'MCH-024', expected: {}, changes: { id: 'X' } }); } catch (e) { refused = true; }
+    check('Employee ID can never be changed', refused);
+    input($('#staff-q'), '');
+    await sleep(250);
 
     // 9. Send Center keeps LIVE in the spreadsheet
     check('send center opens', await go('#send', 'Send Center'));
