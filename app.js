@@ -2092,7 +2092,7 @@
         </ul>
       </section>
       <section class="card" aria-labelledby="jm-title">
-        <div class="card-head"><div><h2 id="jm-title">Jibble</h2><span class="small muted">Fill in a month from Jibble</span></div><a class="btn btn-secondary btn-sm" href="#checks">Start a month</a></div>
+        <div class="card-head"><div><h2 id="jm-title">Jibble</h2><span class="small muted">Fill in a month from Jibble, update it, or make Wages a formula</span></div><div class="tags"><a class="btn btn-secondary btn-sm" href="#checks">Start a month</a><button type="button" class="btn btn-secondary btn-sm" data-action="tool-wages">Make Wages a formula</button></div></div>
       </section>
       <section class="card" aria-labelledby="dm-title">
         <div class="card-head"><div><h2 id="dm-title">Delete a month tab</h2><span class="small muted">For testing: delete a month the Jibble menu made, then make it again with Start a month.</span></div></div>
@@ -2102,6 +2102,21 @@
         </div>
         <p class="small muted" style="margin:0;padding:0 24px 20px;line-height:1.5">Refused for a tab made by hand, a tab with anyone marked Paid, or a month with any payout Sent or Review Required. Payout Control rows are kept. Undo: File → Version history in the spreadsheet.</p>
       </section>`;
+  }
+  /** Wages as a formula in this month's tab: shows who, changes no amount, asks first. */
+  async function wageFormulas() {
+    let plan;
+    try { plan = await call('planWageFormulas', { period: DATA.period }); } catch (err) { toast('Could not check: ' + errText(err), 'error'); return; }
+    if (!plan.convert) { toast('Nothing to change in ' + plan.period + (plan.already ? ': ' + plan.already + ' already have the formula.' : '.'), 'ok'); return; }
+    const ok = await confirmBox('Make Wages a formula?', `
+      <p style="margin:0;line-height:1.5">In <strong>${esc(plan.period)}</strong>, <strong>${plan.convert} ${plan.convert === 1 ? 'person gets' : 'people get'}</strong> Wages Amount as a formula (Hours Worked × Hourly Rate). After that, changing an hour or a rate in the sheet changes their Wages and Total Payout by itself.</p>
+      <p style="margin:0;line-height:1.5"><strong>No amounts change</strong>: the formula gives exactly what is shown now.</p>
+      ${plan.left.length ? `<div class="notice">${icon.alert}<span class="grow"><strong>Left as they are:</strong>${plan.left.map((l) => `<span>${esc(l.name)}: ${esc(l.why)}</span>`).join('')}</span></div>` : ''}`, 'Yes, make it a formula');
+    if (!ok) return;
+    try {
+      const res = await call('addWageFormulas', { period: DATA.period });
+      await load(DATA.period, { message: res.message });
+    } catch (err) { toast('Not changed: ' + errText(err), 'error'); }
   }
   async function runCheckSystem() {
     state.tools.checking = true; render();
@@ -2401,6 +2416,7 @@
     if (a === 'tool-ids') loadIdFills();
     if (a === 'tool-ids-apply') applyIdFills();
     if (a === 'tool-delete-month') deleteMonthTab();
+    if (a === 'tool-wages') wageFormulas();
     if (a === 'start-review') {
       const first = canVerify(payrollRows()).find((x) => !x.verified);
       if (first) openDrawer(first.id);

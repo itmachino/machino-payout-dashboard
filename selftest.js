@@ -446,6 +446,15 @@
     check('Tools opens', await go('#tools', 'Tools'));
     check('every menu item is listed', ['Check System', '1. Prepare Payout', '2. Review Payouts', '3. Test Payout Email', '4. Pre-Send Check',
       '5. Send Ready Employees', 'Setup & Repair', 'Delete a month tab'].every((x) => $('#view').textContent.includes(x)));
+    $('[data-action="tool-wages"]').click();
+    check('Make Wages a formula asks first and says no amount changes', await until(() => $('#confirm-dialog').open && /Make Wages a formula/.test($('#confirm-title').textContent) &&
+      /No amounts change/.test($('#confirm-body').textContent)), $('#confirm-body') && $('#confirm-body').textContent);
+    $('#confirm-dialog').close();
+    await until(() => !$('#confirm-dialog').open);
+    $('[data-action="tool-wages"]').click();
+    await until(() => $('#confirm-dialog').open);
+    $('#confirm-go').click();
+    check('yes: it is done and the message says the pay now follows the sheet', await until(() => !!P.state.toast && /Wages as a formula/.test(P.state.toast.text)), P.state.toast && P.state.toast.text);
     $('[data-action="tool-check"]').click();
     check('Check System runs and shows its findings', await until(() => /Ready to prepare/.test($('#view').textContent)));
     $('[data-action="tool-ids"]').click();

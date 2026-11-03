@@ -618,6 +618,19 @@ window.DashboardPreview = (function () {
       return { period: args.period, message: 'Updated from Jibble up to 23/10/2026 in this preview only. ' + m.employees.length + ' people. What was typed was kept. Run Prepare payouts again so everyone is checked against the new hours.' };
     },
 
+    planWageFormulas(args) {
+      const m = month(args.period);
+      return { period: args.period, convert: m.employees.filter((e) => e.status !== 'Sent' && e.status !== 'Review Required' && !unlinked(e)).length, already: 0,
+        left: m.employees.filter((e) => e.status === 'Sent' || e.status === 'Review Required').map((e) => ({ name: e.name, why: 'already ' + e.status + ', left as it is' }))
+          .concat(m.employees.filter(unlinked).map((e) => ({ name: e.name, why: 'has hours and a rate but no wages: use Needs fixing / Fix people with no pay' }))) };
+    },
+
+    addWageFormulas(args) {
+      const plan = this.planWageFormulas(args);
+      return { period: args.period, converted: plan.convert, already: 0, left: plan.left,
+        message: plan.convert + ' people now have Wages as a formula (Hours Worked × Hourly Rate): change an hour or a rate in the sheet and the Wages and Total Payout follow. ' + plan.left.length + ' left as they are. (Preview only: the sheet was not changed.)' };
+    },
+
     getPayoutControl(args) {
       const m = month(args.period);
       return { period: args.period, rows: m.employees.filter((e) => e.pdf !== 'Not made yet').map((e) => ({
