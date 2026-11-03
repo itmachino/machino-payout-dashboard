@@ -93,8 +93,11 @@ window.DashboardPreview = (function () {
 
   const dir = (id) => DIRECTORY.find((d) => d.id === id);
   // What the page shows for one Staff Directory row (the same fields as the backend).
-  const staffView = (d) => ({ id: d.id, internalId: 'S' + d.id.slice(-3), name: d.name, alias: d.alias, email: d.email,
+  const staffView = (d) => ({ row: DIRECTORY.indexOf(d) + 2, id: d.id, internalId: d.id ? 'S' + d.id.slice(-3) : '', name: d.name, alias: d.alias, email: d.email,
     store: d.store, active: d.active !== false, rate: d.rate === undefined ? '9.50' : d.rate, ss18: d.ss18, ioi: d.ioi });
+  /** Like Payout Automation: one more than the highest number-only Employee ID, padded to 3. */
+  const nextId = () => String(DIRECTORY.reduce((m, d) => /^\d+$/.test(d.id) ? Math.max(m, Number(d.id)) : m, 0) + 1).padStart(3, '0');
+  const handMade = (period) => period === 'September 2026';
   /** Like the backend: refuse when what the admin saw no longer matches. */
   const changedSince = (e, expected) => !expected || Object.keys(expected).some((k) =>
     JSON.stringify(expected[k]) !== JSON.stringify(k === 'verified' ? !!e[k] : (e[k] === undefined ? '' : e[k])));
@@ -123,6 +126,8 @@ window.DashboardPreview = (function () {
 
   /** Recomputes one person's money like the sheet's formula would (preview only). */
   function settle(e) {
+    e.hoursEdit = e.lines.length === 1 ? { hours: String(e.lines[0][2]), rate: e.lines[0][3] == null ? '' : String(e.lines[0][3]), why: '' }
+      : { hours: '', rate: '', why: 'Their hours or rate are written on more than one row in the sheet, so change them in the spreadsheet.' };
     const wages = e.lines.every((l) => l[3] != null) ? e.lines.reduce((s, l) => s + l[2] * l[3], 0) : null;
     e.wages = rm(wages);
     e.lines = e.lines.map((l) => l.slice(0, 4));
@@ -268,6 +273,8 @@ window.DashboardPreview = (function () {
             .concat(employees.filter((e) => e.lines.some((l) => l[3] == null)).map((e) => ({ tag: 'No rate', store: e.stores[0], title: e.name + ' has no Hourly Rate', next: 'add the rate in the Staff Directory, then fill the month again.', employeeId: e.id })))
         },
         staff: DIRECTORY.map(staffView),
+        staffNextId: nextId(),
+        monthTab: { fromJibble: !handMade(period) },
         claimTypes: CLAIM_TYPES_IN_SHEET.slice(),
         documents: [
           { ok: true, title: 'Payroll tab “' + period + '”', note: 'Found and readable. ' + employees.length + ' people.' },
@@ -290,6 +297,16 @@ window.DashboardPreview = (function () {
         e.claims = c.claims.map((x) => ({ type: x.type, amount: x.amount === '' ? null : rm(x.amount) }));
         e.incentives = c.incentives.map((x) => ({ type: x.type, amount: x.amount === '' ? null : rm(x.amount) }));
         e.commission = c.commission === '' ? null : rm(c.commission);
+        settle(e);
+        if (wasPrepared && e.status !== 'Sent') {
+          e.status = 'Needs Attention'; e.issue = 'The payout changed after it was prepared.';
+          e.fix = 'Run Prepare Payout again, then check the new Total Payout.'; e.verified = false;
+          if (e.pdf === 'Up to date') e.pdf = 'Out of date';
+        }
+      } else if (req.section === 'hours') {
+        if (e.payment === 'Paid') fail(e.name + ' is marked Paid, so the payout amounts are locked. If this really needs to change, set Payment Status back first.');
+        if (e.hoursEdit.why) fail(e.name + ': ' + e.hoursEdit.why);
+        e.lines = [[e.lines[0][0], e.lines[0][1], c.hours === '' ? 0 : Number(c.hours), c.rate === '' ? null : Number(c.rate)]];
         settle(e);
         if (wasPrepared && e.status !== 'Sent') {
           e.status = 'Needs Attention'; e.issue = 'The payout changed after it was prepared.';
@@ -381,7 +398,7 @@ window.DashboardPreview = (function () {
         const row = CONFIG.find((r) => r.label === k);
         if (!row) fail('"' + k + '" is not a Configuration setting.');
         if (row.locked) fail(k + ' cannot be changed from the dashboard.');
-        if (row.kind === 'emails' && String(changes[k]).split(',').some((e) => e.trim() && !/^[^s@]+@[^s@]+.[^s@]+$/.test(e.trim()))) fail(k + ' must be email addresses separated by commas, or blank.');
+        if (row.kind === 'emails' && String(changes[k]).split(',').some((e) => e.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e.trim()))) fail(k + ' must be email addresses separated by commas, or blank.');
       });
       keys.forEach((k) => { CONFIG.find((r) => r.label === k).value = String(changes[k]); });
       return { message: keys.length + ' setting' + (keys.length === 1 ? '' : 's') + ' saved in this preview only. The Configuration tab was not changed.' };
@@ -419,14 +436,77 @@ window.DashboardPreview = (function () {
     },
 
     addStaff(args) {
-      const p = args.person || {};
-      if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,19}$/.test(String(p.id || '').trim())) fail('Type the Employee ID, e.g. 031 (letters, numbers, no spaces). Nothing was added.');
+      const p = Object.assign({}, args.person || {});
+      p.id = String(p.id || '').trim() || nextId();
+      if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,19}$/.test(p.id)) fail('Type the Employee ID, e.g. 031 (letters, numbers, no spaces). Nothing was added.');
+      if (!p.store || !p.email || !p.rate) fail('Fill in the store, email and Hourly Rate. Nothing was added.');
       if (!String(p.name || '').trim()) fail('Type the name. Nothing was added.');
       if (dir(p.id.trim())) fail('Employee ID ' + p.id + ' is already in the Staff Directory. Nothing was added.');
       if (DIRECTORY.some((x) => x.name.toLowerCase() === p.name.trim().toLowerCase())) fail('Someone named "' + p.name + '" is already in the Staff Directory. Nothing was added.');
       DIRECTORY.push({ id: p.id.trim(), name: p.name.trim(), alias: p.alias || '', store: p.store || '', email: p.email || '',
         ss18: p.ss18 || '', ioi: p.ioi || '', active: p.active !== false, rate: p.rate || '' });
-      return { staff: DIRECTORY.map(staffView), message: p.name.trim() + ' was added in this preview only. The Staff Directory was not changed.' };
+      return { staff: DIRECTORY.map(staffView), staffNextId: nextId(), message: p.name.trim() + ' was added with Employee ID ' + p.id + ' in this preview only. The Staff Directory was not changed.' };
+    },
+
+    setStaffId(args) {
+      const d = DIRECTORY[Number(args.row) - 2];
+      if (!d || d.name !== args.name) fail('That row of the Staff Directory changed since you opened it. Refresh, then try again. Nothing was changed.');
+      if (d.id) fail(d.name + ' already has Employee ID ' + d.id + '. It is never changed. Nothing was changed.');
+      const id = String(args.id || '').trim() || nextId();
+      if (dir(id)) fail('Employee ID ' + id + ' is already in the Staff Directory. Nothing was changed.');
+      d.id = id;
+      return { staff: DIRECTORY.map(staffView), staffNextId: nextId(), message: d.name + ' now has Employee ID ' + id + ' in this preview only.' };
+    },
+
+    addToMonth(args) {
+      const m = month(args.period);
+      if (handMade(args.period)) fail('"' + args.period + '" was made by hand, so add the person in the spreadsheet. Nothing was changed.');
+      const p = args.person || {};
+      const d = dir(p.employeeId);
+      if (!d) fail('That Employee ID is not in the Staff Directory exactly once. Nothing was changed.');
+      if (m.employees.some((e) => e.id === d.id)) fail(d.name + ' is already on the "' + args.period + '" tab. Nothing was changed.');
+      const hours = p.days.reduce((n, x) => n + Number(x.hours), 0);
+      const rate = d.rate === undefined ? 9.5 : (d.rate === '' ? null : Number(d.rate));
+      const e = { id: d.id, name: d.name, stores: [p.store], email: mask(d.email), jibble: [d.ss18, d.ioi].filter(Boolean).join(' · '),
+        lines: [[p.store, p.days.map((x) => Number(x.date.slice(8))).sort((a, b) => a - b).join(', '), hours, rate]],
+        claims: [], incentives: [], commission: null, payment: 'Not paid', paymentId: '', paymentDate: '', verified: false,
+        status: 'Needs Attention', issue: 'Not prepared yet.', fix: 'Run Prepare Payout.', pdf: 'Not made yet', slip: 'Missing', canEdit: true,
+        attendance: p.days.map((x) => ({ date: Number(x.date.slice(8)), label: x.date, store: p.store, hours: Number(x.hours).toFixed(2), flag: '' })) };
+      settle(e);
+      m.employees.push(e);
+      return { period: args.period, message: d.name + ' was added to "' + args.period + '" in this preview only: ' + p.days.length + ' day(s), ' + hours.toFixed(2) + ' hours. Run Prepare Payout so they can be checked and sent.' };
+    },
+
+    removeFromMonth(args) {
+      if (args.confirm !== 'REMOVE') fail('Type REMOVE to confirm.');
+      const m = month(args.period);
+      if (handMade(args.period)) fail('"' + args.period + '" was made by hand, so remove the person in the spreadsheet. Nothing was changed.');
+      const e = m.employees.find((x) => x.id === args.employeeId);
+      if (!e) fail('This person is no longer on the month tab. Refresh and try again.');
+      if (changedSince(e, args.expected)) fail(e.name + ' changed since you opened them. Refresh, then try again. Nothing was changed.');
+      if (['Sent', 'Review Required'].includes(e.status)) fail(e.name + ' was already sent, so nothing about this payout can be changed here.');
+      if (e.payment === 'Paid') fail(e.name + ' is marked Paid, so they stay on the month as a record. Nothing was changed.');
+      m.employees.splice(m.employees.indexOf(e), 1);
+      return { period: args.period, message: e.name + ' was removed from "' + args.period + '" in this preview only.' };
+    },
+
+    getPayoutControl(args) {
+      const m = month(args.period);
+      return { period: args.period, rows: m.employees.filter((e) => e.pdf !== 'Not made yet').map((e) => ({
+        employeeId: e.id, name: e.name, store: e.stores.join(' / '), period: args.period, total: e.total, payment: e.payment === 'Paid' ? 'Paid' : '',
+        payoutDate: e.paymentDate, calculation: true, slip: e.slip === 'Found', verified: !!e.verified, status: e.status, issue: e.issue || '' })) };
+    },
+
+    planMonthSetup(args) {
+      // Invented stand-in for the menu's matching: the Jibble name's first word is one of the Staff Directory name's words.
+      const first = (n) => n.split(' ')[0].replace(/\W/g, '');
+      const links = [];
+      month('October 2026').unmatched.forEach((u) => {
+        const col = u.store === 'SS18' ? 'ss18' : 'ioi';
+        const d = DIRECTORY.find((x) => x.id && x.name.split(' ').includes(first(u.jibbleName)) && !x[col]);
+        if (d) links.push({ store: u.store, jibbleName: u.jibbleName, jibbleId: u.jibbleId, name: d.name, employeeId: d.id, exact: false });
+      });
+      return { month: args.month, links, rates: [], from: '', keys: links.map((l) => 'link|' + l.store + '|' + l.employeeId + '|' + l.jibbleId) };
     },
 
     deleteStaff(args) {
@@ -451,6 +531,11 @@ window.DashboardPreview = (function () {
         delete months[label];
         if (!args.folders) NO_FOLDERS[label] = true;
       }
+      (args.directory || []).forEach((k) => {
+        const [, store, id, jibbleId] = k.split('|');
+        const d = dir(id);
+        if (d && !d[store === 'SS18' ? 'ss18' : 'ioi']) d[store === 'SS18' ? 'ss18' : 'ioi'] = jibbleId;
+      });
       if (args.makeCurrent) {
         CONFIG.find((r) => r.label === 'Current Payout Month').value = label.split(' ')[0];
         CONFIG.find((r) => r.label === 'Current Payout Year').value = label.split(' ')[1];

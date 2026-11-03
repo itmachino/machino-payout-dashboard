@@ -154,6 +154,8 @@
     slips: { files: [], plan: null, planning: false, saving: false, result: null, error: null },
     links: {},
     cfg: { editing: false, draft: null, saving: false },
+    add: null,                                         // the Add person window
+    control: { period: null, rows: null, loading: false, error: null, status: 'all', store: 'all' },
     verify: null,
     menu: false,
     toast: null
@@ -228,6 +230,7 @@
       if (opts.loadError) throw new Error(opts.loadError);
       const d = opts.data || await call('getDashboardData', { period: period || null });
       DATA = d;
+      state.control.rows = null;   // the Payout Control page reads its rows again after any change
       showMode();
       state.period = d.period;
       if (state.openId && !emp(state.openId)) closeDrawer(true, true);
@@ -260,10 +263,16 @@
   function overview() {
     const s = DATA.summary[state.store];
     const att = attentionList().filter((p) => inStore(p.stores, state.store));
+    // Each step of the month opens the page where it is done (owner, 2026-11-03: "click something that goes there").
+    const STEP_GO = [['#checks', 'Start the month from Jibble'], ['#staff', 'Add missing Hourly Rates'], ['#slips', 'Upload the payment slips'],
+      ['#control', 'Prepare the payouts'], ['#payroll', 'Check and verify each person'], ['#send', 'Send a test email'],
+      ['#control', 'See who is ready to send'], ['#send', 'Send to employees'], ['#history', 'See the results']];
     const steps = DATA.monthSteps.map((label, i) => {
       const cls = i < DATA.currentStep ? 'done' : i === DATA.currentStep ? 'current' : '';
-      return `<li class="${cls}"${i === DATA.currentStep ? ' aria-current="step"' : ''}><span class="bar"></span><span class="step-l">${i < DATA.currentStep ? icon.check + '<span class="sr-only">done:</span>' : ''}${esc(label)}${i === DATA.currentStep ? ' · now' : ''}</span></li>`;
+      const go = STEP_GO[i] || ['#overview', label];
+      return `<li class="${cls}"${i === DATA.currentStep ? ' aria-current="step"' : ''}><span class="bar"></span><a class="step-l" href="${go[0]}" title="${esc(go[1])}" style="color:inherit;text-decoration:none">${i < DATA.currentStep ? icon.check + '<span class="sr-only">done:</span>' : ''}${esc(label)}${i === DATA.currentStep ? ' · now' : ''}</a></li>`;
     }).join('');
+    const nextGo = STEP_GO[Math.min(DATA.currentStep, STEP_GO.length - 1)];
     const segTotal = s.sent + s.ready + s.na + s.rr + s.failed;
     const segs = [['Sent', s.sent, '#3E6B4F'], ['Ready', s.ready, '#2F5E73'], ['Needs Attention', s.na, '#C98A12'], ['Review Required', s.rr, '#8A3B12'], ['Failed', s.failed, '#9B2C2C']];
     const allDone = s.attention === 0 && s.waiting === 0;
@@ -289,8 +298,9 @@
                  <p>Open each person in Payroll Management to fix the problem. Then tick Manager Verified for everyone you have checked.</p>`}
           </div>
           <div class="hero-actions">
+            <a class="btn btn-primary" href="${nextGo[0]}" id="next-step-go">Next step: ${esc(nextGo[1])} ${icon.arrow}</a>
             ${allDone ? `<a class="btn btn-secondary" href="#history">Open History</a>` : `
-            <button type="button" class="btn btn-primary" data-goto-status="look">Fix the problems ${icon.arrow}</button>
+            <button type="button" class="btn btn-secondary" data-goto-status="look">Fix the problems</button>
             <button type="button" class="btn btn-secondary" data-goto-status="waiting">Verify payouts</button>`}
           </div>
         </div>
@@ -368,6 +378,88 @@
     return rows.sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0) * p.dir);
   }
 
+  /* ---------- Payout Control: the tab as it is, for the chosen month (owner, 2026-11-03) ---------- */
+  async function loadControl() {
+    const c = state.control;
+    if (c.loading) return;
+    c.loading = true; c.error = null; c.period = DATA.period;
+    try {
+      c.rows = (await call('getPayoutControl', { period: DATA.period })).rows;
+    } catch (err) { c.rows = null; c.error = errText(err); }
+    c.loading = false;
+    if (currentRoute() === 'control') render();
+  }
+  function controlPage() {
+    const c = state.control;
+    if ((c.rows === null || c.period !== DATA.period) && !c.loading && !c.error) setTimeout(loadControl, 0);
+    const ps = DATA.preSend;
+    const all = c.rows || [];
+    const rows = all.filter((r) => (c.status === 'all' || r.status === c.status) && (c.store === 'all' || r.store.includes(c.store === 'ss18' ? 'SS18' : 'IOI')));
+    const count = (s) => all.filter((r) => r.status === s).length;
+    const verified = all.filter((r) => r.verified).length;
+    const verifyCell = (r) => {
+      const e = DATA.employees.find((x) => x.id === r.employeeId);
+      if (r.status === 'Sent' || r.status === 'Review Required' || !e) return r.verified ? '<span class="vyes">Yes</span>' : '<span class="muted">Not yet</span>';
+      return `<label class="vbox"><input type="checkbox" data-verify="${esc(e.id)}"${e.verified ? ' checked' : ''}${e.total == null ? ' disabled title="Total Payout is blank"' : ''} aria-label="Manager Verified: ${esc(r.name)}"><span class="${e.verified ? 'vyes' : 'muted'}">${e.verified ? 'Yes' : 'Not yet'}</span></label>`;
+    };
+    return `
+      <header class="page-head">
+        <div class="title-block"><h1>Payout Control</h1><div class="tags small muted"><span>${esc(DATA.period)} · one row per person after Prepare Payout: status, documents and Manager Verified</span>${sampleTag()}</div></div>
+        <div class="tools">
+          ${periodSelect('pc-month')}
+          ${modeBadge()}
+          <button type="button" class="icon-btn" data-action="control-refresh" aria-label="Read Payout Control again"${c.loading ? ' disabled' : ''}>${c.loading ? '<span class="spinner sm" aria-hidden="true"></span>' : icon.refresh}</button>
+          <button type="button" class="link-btn" data-sheet="Payout Control">Open the tab ${icon.ext}</button>
+          <button type="button" class="btn btn-primary" data-action="prepare">${icon.refresh}Prepare payouts</button>
+        </div>
+      </header>
+      ${liveStrip()}${toastHTML()}
+      <section class="card raised hero" aria-labelledby="pc-next">
+        <div class="hero-top">
+          <div class="hero-copy">
+            <span class="eyebrow">Ready to send?</span>
+            ${ps.will.length
+              ? `<h2 id="pc-next">${ps.will.length} ${ps.will.length === 1 ? 'payout is' : 'payouts are'} ready to send</h2><p>Prepared, verified and nothing to fix. Send a test email first, then send to employees in the Send Center.</p>`
+              : `<h2 id="pc-next">Nobody is ready to send yet</h2><p>${ps.cannot.length ? ps.cannot.length + ' still need something: fix the problems, run Prepare payouts, then tick Manager Verified for each person.' : 'Run Prepare payouts first.'}</p>`}
+          </div>
+          <div class="hero-actions">
+            <a class="btn ${ps.will.length ? 'btn-primary' : 'btn-secondary'}" href="#send">Go to the Send Center ${icon.arrow}</a>
+            ${ps.cannot.length ? '<button type="button" class="btn btn-secondary" data-goto-status="look">Fix the problems</button>' : ''}
+          </div>
+        </div>
+      </section>
+      <section class="card card-body" aria-label="Counts" style="display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center">
+        <span class="badge b-ready">Ready ${count('Ready')}</span><span class="badge b-attention">Needs Attention ${count('Needs Attention')}</span>
+        <span class="badge b-sent">Sent ${count('Sent')}</span><span class="badge b-review">Review Required ${count('Review Required')}</span><span class="badge b-failed">Failed ${count('Failed')}</span>
+        <span class="small muted">Manager Verified: ${verified} of ${all.length}</span>
+        <span style="flex:1"></span>
+        <label class="field" style="flex-direction:row;align-items:center;gap:8px"><span>Status</span><select class="select" id="pc-status">${[['all', 'All'], ['Ready', 'Ready'], ['Needs Attention', 'Needs Attention'], ['Sent', 'Sent'], ['Review Required', 'Review Required'], ['Failed', 'Failed']].map(([v, l]) => `<option value="${v}"${c.status === v ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
+        ${seg('pc-store', [['all', 'Both'], ['ss18', 'SS18'], ['ioi', 'IOI']], c.store, 'Store')}
+      </section>
+      <section class="card raised" aria-labelledby="pc-title">
+        <div class="card-head"><h2 id="pc-title">Payout Control</h2><span class="small muted">${c.rows ? rows.length + ' of ' + all.length : ''}</span></div>
+        ${c.error ? `<div class="card-body"><div class="notice error">${icon.alert}<span class="grow">Could not read Payout Control: ${esc(c.error)}</span><button type="button" class="btn btn-secondary btn-sm" data-action="control-refresh">Try again</button></div></div>`
+          : c.rows === null ? `<div class="loading"><span class="spinner" aria-hidden="true"></span>Reading the Payout Control tab…</div>`
+          : rows.length ? `<div class="table-wrap"><table class="log">
+            <thead><tr><th scope="col">Employee</th><th scope="col">Store</th><th scope="col" class="right">Total Payout</th><th scope="col">Payment</th><th scope="col">Payout Date</th><th scope="col">Documents</th><th scope="col">Manager Verified</th><th scope="col">Status</th><th scope="col">Issue</th></tr></thead>
+            <tbody>${rows.map((r) => `<tr>
+              <th scope="row"><div style="display:flex;flex-direction:column;gap:2px">${DATA.employees.some((e) => e.id === r.employeeId) ? `<button type="button" class="link-btn" data-open="${esc(r.employeeId)}" style="font-weight:600;text-align:left">${esc(r.name)}</button>` : `<strong>${esc(r.name)}</strong>`}<span class="small muted">${idText(r.employeeId)}</span></div></th>
+              <td>${r.store ? storeBadges(r.store.split(/\s*[\/+]\s*/)) : '—'}</td>
+              <td class="right num" style="white-space:nowrap">${money(r.total)}</td>
+              <td>${esc(r.payment || 'Not paid')}</td>
+              <td class="small">${esc(r.payoutDate || '—')}</td>
+              <td><div style="display:flex;flex-direction:column;gap:4px;align-items:flex-start">
+                ${r.calculation ? `<button type="button" class="link-btn" data-pc-doc="${esc(r.employeeId)}|pdf">Calculation ${icon.ext}</button>` : '<span class="small muted">No calculation</span>'}
+                ${r.slip ? `<button type="button" class="link-btn" data-pc-doc="${esc(r.employeeId)}|slip">Slip ${icon.ext}</button>` : '<span class="small muted">No slip</span>'}</div></td>
+              <td>${verifyCell(r)}</td>
+              <td>${statusBadge(r.status || 'Needs Attention')}</td>
+              <td class="small" style="max-width:280px">${r.issue ? esc(r.issue) : '<span class="muted">—</span>'}</td>
+            </tr>`).join('')}</tbody></table></div>`
+          : `<div class="empty"><h3>${all.length ? 'Nobody matches' : 'No Payout Control rows for ' + esc(DATA.period) + ' yet'}</h3><span class="muted small">${all.length ? 'Try another status or store.' : 'Press Prepare payouts: it makes each person’s Payment Calculation and their row here.'}</span></div>`}
+        <p class="small muted" style="margin:0;padding:0 24px 20px;line-height:1.5">Status and Issue are written by Prepare Payout and by sending, never by hand here. Sent is final: a Sent payout is never sent again. Review Required waits for a person to check the sender’s Gmail Sent folder.</p>
+      </section>`;
+  }
+
   /* ---------- Manager Verified: one person at a time, on purpose ---------- */
   // A Sent payout never changes; a blank Total Payout has nothing to check yet.
   const canVerify = (list) => list.filter((e) => e.status !== 'Sent' && e.total != null);
@@ -427,6 +519,7 @@
           ${periodSelect('pm-month')}
           ${modeBadge()}
           ${refreshBtn()}
+          <button type="button" class="btn btn-secondary" data-action="add-person">${icon.plus}Add person</button>
           <a class="btn btn-secondary" href="#slips">${icon.upload}Upload slips</a>
           <button type="button" class="btn btn-primary" data-action="prepare">${icon.refresh}Prepare payouts</button>
         </div>
@@ -834,11 +927,32 @@
       makeCurrent: document.getElementById('ms-current').checked, replace: !!(document.getElementById('ms-replace') || {}).checked };
     const label = monthLabel(month);
     if (args.fill && DATA.periods.includes(label) && !args.replace) { toast('“' + label + '” already exists. Tick “replace it” to fill it again.', 'error'); return; }
+    // Like the menu: first, which EMPTY Staff Directory cells Jibble can fill (Jibble IDs, Hourly Rates).
+    let plan = null;
+    if (args.fill) {
+      btn.disabled = true; btn.innerHTML = '<span class="spinner sm"></span>Checking Jibble…';
+      try { plan = await call('planMonthSetup', { month }); } catch (err) {
+        btn.disabled = false; btn.textContent = 'Set up ' + label;
+        toast('Not set up: ' + errText(err), 'error');
+        return;
+      }
+      btn.disabled = false; btn.textContent = 'Set up ' + label;
+    }
+    const fills = plan && plan.keys.length ? `
+      <div class="notice info" style="flex-direction:column;align-items:stretch;gap:8px">
+        <strong>Also fill in the Staff Directory’s empty cells?</strong>
+        <ul style="margin:0;padding-left:20px;line-height:1.6">
+          ${plan.links.map((l) => `<li>Jibble ID (${esc(l.store)}): ${esc(l.jibbleName)} → <strong>${esc(l.name)}</strong>, ${esc(l.employeeId)}${l.exact ? '' : ' <span class="small muted">(name not exactly the same: check it)</span>'}</li>`).join('')}
+          ${plan.rates.map((r) => `<li>Hourly Rate from “${esc(plan.from)}”: <strong>${esc(r.name)}</strong> ${esc(r.rate)}</li>`).join('')}
+        </ul>
+        <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="ms-dir" checked> Yes, fill these in (nothing already filled in is changed)</label>
+      </div>` : '';
     const ok = await confirmBox('Set up ' + label + '?', `<ul style="margin:0;padding-left:20px;line-height:1.7">
         ${args.fill ? `<li>${args.replace ? '<strong>Replace</strong> the' : 'Make the'} “${esc(label)}” tab from Jibble</li>` : ''}
         ${args.folders ? `<li>Create the “${esc(label)}” folders in Drive (only if missing)</li>` : ''}
-        ${args.makeCurrent ? `<li>Set Configuration’s payout month to ${esc(label)}</li>` : ''}</ul>`, 'Set up', args.replace);
+        ${args.makeCurrent ? `<li>Set Configuration’s payout month to ${esc(label)}</li>` : ''}</ul>${fills}`, 'Set up', args.replace);
     if (!ok) return;
+    args.directory = fills && (document.getElementById('ms-dir') || {}).checked ? plan.keys : [];
     btn.disabled = true; btn.innerHTML = '<span class="spinner sm"></span>Working… (this can take a minute)';
     try {
       const res = await call('setUpMonth', args);
@@ -1120,16 +1234,24 @@
    * (someone changed it meanwhile). No version numbers are kept anywhere.
    */
   const saw = (e) => ({ total: e.total, payment: e.payment, paymentId: e.paymentId || '', paymentDate: e.paymentDate || '',
-    verified: !!e.verified, claims: e.claims, incentives: e.incentives, commission: e.commission, status: e.status });
+    verified: !!e.verified, claims: e.claims, incentives: e.incentives, commission: e.commission, status: e.status,
+    hours: e.hours, wages: e.wages });
   const listCopy = (items) => (items || []).map((x) => ({ type: x.type || '', amount: plain(x.amount) }));
+  const HOURS_RE = /^\d+(\.\d{1,2})?$/;
+  const rmText = (n) => 'RM' + n.toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  /** Wages as the sheet will work it out: hours × rate, rounded half a sen up (the Jibble menu's rule). */
+  const wagesOf = (hours, rate) => HOURS_RE.test(String(hours).trim()) && HOURS_RE.test(String(rate).trim()) && Number(rate) > 0
+    ? Math.floor((Math.round(Number(hours) * 100) * Math.round(Number(rate) * 100) + 50) / 100) / 100 : null;
   function makeDraft(e, section) {
     if (section === 'payout') return { claims: listCopy(e.claims), incentives: listCopy(e.incentives), commission: plain(e.commission) };
+    if (section === 'hours') return { hours: (e.hoursEdit || {}).hours || '', rate: plain((e.hoursEdit || {}).rate) };
     if (section === 'payment') return { verified: !!e.verified, payment: e.payment, paymentId: e.paymentId || '', paymentDate: e.paymentDate || '' };
     return null;
   }
   const trimList = (items) => items.map((x) => ({ type: x.type.trim(), amount: String(x.amount).trim() })).filter((x) => x.type || x.amount);
   function cleanDraft(d) {
     if (state.editing === 'payout') return { claims: trimList(d.claims), incentives: trimList(d.incentives), commission: String(d.commission).trim() };
+    if (state.editing === 'hours') return { hours: String(d.hours).trim(), rate: String(d.rate).trim() };
     return { verified: d.verified, payment: d.payment, paymentId: d.paymentId.trim(), paymentDate: d.paymentDate };
   }
   function draftChanges(e) {
@@ -1145,6 +1267,10 @@
       if (bad(d.claims)) return 'Each claim needs a type and an amount, e.g. Transport and 45.50.';
       if (bad(d.incentives)) return 'Each incentive needs a type and an amount, e.g. Sales target and 100.';
       if (badAmount(d.commission)) return 'Commission must be a number like 120 or 120.50, or blank for none.';
+    }
+    if (state.editing === 'hours') {
+      if (String(d.hours).trim() !== '' && !HOURS_RE.test(String(d.hours).trim())) return 'Hours Worked must be a number of hours like 172 or 172.25.';
+      if (badAmount(d.rate)) return 'Hourly Rate must be an amount like 10 or 10.50, or blank.';
     }
     return '';
   }
@@ -1236,9 +1362,17 @@
             </div>
           </section>
 
-          <section class="dsec" id="d-hours" aria-labelledby="d-hours-h">
-            <div class="dsec-head"><h3 id="d-hours-h">Attendance and working hours</h3></div>
+          <section class="dsec${ed === 'hours' ? ' editing' : ''}" id="d-hours" aria-labelledby="d-hours-h">
+            <div class="dsec-head"><h3 id="d-hours-h">Attendance and working hours</h3>${canEdit && e.hoursEdit && !e.hoursEdit.why && !isPaid ? '<button type="button" class="btn btn-secondary btn-sm" data-edit="hours">Edit hours</button>' : ''}</div>
             <div class="dsec-body">
+              ${ed === 'hours' ? `
+              ${lockedSent ? sentWarn : isPrepared(e) ? preparedWarn : ''}
+              <div class="form">
+                <div class="field"><label for="f-hours">Hours Worked <span class="muted">(this month)</span></label><input class="input" id="f-hours" data-draft="hours" inputmode="decimal" placeholder="e.g. 172.25" value="${esc(d.hours)}"${String(d.hours).trim() && !HOURS_RE.test(String(d.hours).trim()) ? ' aria-invalid="true"' : ''}></div>
+                <div class="field"><label for="f-rate">Hourly Rate</label><div class="money-in"><span>RM</span><input class="input" id="f-rate" data-draft="rate" inputmode="decimal" placeholder="e.g. 10.50" value="${esc(d.rate)}"${badAmount(d.rate) ? ' aria-invalid="true"' : ''}></div></div>
+                <div class="field full"><span>Wages</span><div class="locked"><span id="f-wages">${wagesOf(d.hours, d.rate) == null ? 'Blank until hours and rate are filled in' : money(rmText(wagesOf(d.hours, d.rate)))}</span><span class="calc">Hours × rate, worked out when you save</span></div></div>
+              </div>
+              <div class="notice info">${icon.info}<span class="grow">This changes only ${esc(DATA.period)}. If the month is filled from Jibble again, Jibble’s hours replace these. The Staff Directory rate is not changed.</span></div>` : ''}
               <div class="sync">
                 <span style="display:inline-flex;gap:6px;align-items:center">${icon.refresh}Filled from Jibble · ${esc(DATA.jibble.filledAt)}</span>
                 ${flagCount ? `<span style="color:var(--attention-ink)">${flagCount} day${flagCount === 1 ? '' : 's'} without a clock-out</span>` : ''}
@@ -1250,7 +1384,8 @@
                 <thead><tr><th scope="col">Date</th><th scope="col">Store</th><th scope="col" style="text-align:right">Hours</th><th scope="col">Note</th></tr></thead>
                 <tbody>${e.attendance.map((x) => `<tr class="${x.flag ? 'flag' : ''}"><td>${esc(x.label)}</td><td>${esc(x.store)}</td><td class="right num">${x.hours === '' ? '—' : esc(x.hours)}</td><td>${x.flag ? `<span class="badge b-attention">${esc(x.flag)}</span>` : ''}</td></tr>`).join('')}</tbody>
               </table></div>
-              <span class="hint">Hours are corrected in Jibble, then <strong>Jibble → Fill in a month from Jibble</strong> runs again in the spreadsheet. Anyone marked Paid is never changed by it.</span>
+              <span class="hint">${e.hoursEdit && e.hoursEdit.why ? esc(e.hoursEdit.why) : isPaid ? 'Marked Paid: the hours are locked.' : 'Change the hours here with <strong>Edit hours</strong>, or correct them in Jibble and fill the month from Jibble again (that replaces hours typed here).'} Anyone marked Paid is never changed by Jibble.</span>
+              ${DATA.monthTab && DATA.monthTab.fromJibble && canEdit && !isPaid && !String(e.id).startsWith('name:') ? `<button type="button" class="link-btn" data-action="remove-from-month" style="align-self:flex-start;color:var(--failed-ink)">Remove ${esc(e.name.split(' ')[0])} from ${esc(DATA.period)}…</button>` : ''}
             </div>
           </section>
 
@@ -1404,6 +1539,27 @@
     }
   }
 
+  /** Removes the open person from this month's tab (owner, 2026-11-03). Typed REMOVE; a recent sign-in. */
+  async function removeFromMonth() {
+    const e = emp(state.openId);
+    if (!e) return;
+    const ok = await confirmBox('Remove ' + e.name + ' from ' + DATA.period + '?',
+      `<p style="margin:0;line-height:1.5">This deletes <strong>${esc(e.name)}</strong>’s rows from the “${esc(DATA.period)}” tab: their hours, claims, incentives and commission for this month. They stay in the Staff Directory.</p>
+       <p class="small muted" style="margin:0;line-height:1.5">If they were already prepared, their old Payout Control row stays as a record and is never sent. Filling the month from Jibble again brings them back if they have hours in Jibble.</p>
+       <label class="field">Type REMOVE to confirm<input class="input" id="confirm-word" autocomplete="off"></label>`, 'Remove', true);
+    if (!ok) return;
+    const word = (document.getElementById('confirm-word') || {}).value || '';
+    if (word.trim() !== 'REMOVE') { toast('Not removed: REMOVE was not typed.', 'error'); return; }
+    try {
+      const res = await call('removeFromMonth', { period: DATA.period, employeeId: e.id, expected: saw(e), confirm: 'REMOVE' });
+      closeDrawer(true, true);
+      await load(DATA.period, { message: res.message });
+    } catch (err) {
+      toast('Not removed: ' + errText(err), 'error');
+      renderDrawer();
+    }
+  }
+
   /* ---------- Email preview ---------- */
   async function openEmail(id) {
     const dlg = document.getElementById('email-dialog');
@@ -1459,7 +1615,10 @@
     ['name', 'Name'], ['alias', 'Payment Slip Name Alias'], ['email', 'Employee Email'], ['store', 'Store'],
     ['active', 'Active'], ['rate', 'Hourly Rate'], ['ss18', 'Jibble ID (SS18)'], ['ioi', 'Jibble ID (IOI)']
   ];
-  const staffRow = (id) => DATA.staff.find((s) => s.id === id);
+  // A row is found by its Employee ID, or by its sheet row when it has none yet.
+  const staffKey = (s) => s.id || 'row:' + s.row;
+  const staffRow = (key) => DATA.staff.find((s) => staffKey(s) === key);
+  const noJibble = (s) => s.active && !s.ss18 && !s.ioi;
   function staffPage() {
     const st = state.staff;
     const q = st.q.trim().toLowerCase();
@@ -1473,6 +1632,13 @@
         <div class="tools">${refreshBtn()}<button type="button" class="btn btn-primary" data-action="staff-add">${icon.plus || '+'} Add person</button></div>
       </header>
       ${toastHTML()}
+      ${(() => {
+        const missing = DATA.staff.filter(noJibble).length;
+        const noId = DATA.staff.filter((s) => !s.id).length;
+        return missing || noId ? `<div class="notice" role="note">${icon.alert}<span class="grow">
+          ${missing ? `<span><strong>${missing} active ${missing === 1 ? 'person has' : 'people have'} no Jibble ID.</strong> Their Jibble hours only come in when their name is exactly the same in Jibble. Open them with <b>Edit</b> and pick their name from Jibble’s list.</span>` : ''}
+          ${noId ? `<span><strong>${noId} ${noId === 1 ? 'row has' : 'rows have'} no Employee ID</strong>, so ${noId === 1 ? 'that person' : 'they'} cannot be paid. Press <b>Give ID</b>.</span>` : ''}</span></div>` : '';
+      })()}
       <div class="card card-body" style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:16px">
         <label class="field" style="flex:1 1 240px">Search<input class="input" type="search" id="staff-q" value="${esc(st.q)}" placeholder="Name, Employee ID or email"></label>
         <div class="field"><span>Show</span>${seg('staff-show', [['active', 'Active'], ['inactive', 'Not active'], ['all', 'Everyone']], st.show, 'Show')}</div>
@@ -1482,18 +1648,96 @@
         ${rows.length ? `<div class="table-wrap"><table class="log">
           <thead><tr><th scope="col">Name</th><th scope="col">Employee ID</th><th scope="col">Store</th><th scope="col">Email</th><th scope="col" class="right">Hourly Rate</th><th scope="col">Jibble IDs</th><th scope="col"><span class="sr-only">Edit</span></th></tr></thead>
           <tbody>${rows.map((s) => `<tr>
-            <th scope="row"><div style="display:flex;flex-direction:column;gap:2px"><strong>${esc(s.name)}</strong>${s.alias ? `<span class="small muted">Slip name: ${esc(s.alias)}</span>` : ''}${s.active ? '' : '<span class="badge b-neutral" style="align-self:flex-start">Not active</span>'}</div></th>
-            <td class="num">${esc(s.id)}</td>
+            <th scope="row"><div style="display:flex;flex-direction:column;gap:2px"><strong>${esc(s.name)}</strong>${s.alias ? `<span class="small muted">Slip name: ${esc(s.alias)}</span>` : ''}${s.active ? '' : '<span class="badge b-neutral" style="align-self:flex-start">Not active</span>'}${noJibble(s) ? '<span class="badge b-attention" style="align-self:flex-start">No Jibble ID</span>' : ''}</div></th>
+            <td class="num">${s.id ? esc(s.id) : '<span class="badge b-attention">No Employee ID</span>'}</td>
             <td>${s.store ? storeBadges([s.store]) : '<span class="muted">—</span>'}</td>
             <td style="overflow-wrap:anywhere">${s.email ? esc(s.email) : '<span class="blank">Missing</span>'}</td>
             <td class="right num" style="white-space:nowrap">${s.rate ? 'RM ' + esc(s.rate) : '<span class="blank">Blank</span>'}</td>
             <td class="small">${[s.ss18 && 'SS18 ' + s.ss18, s.ioi && 'IOI ' + s.ioi].filter(Boolean).map(esc).join('<br>') || '<span class="muted">—</span>'}</td>
-            <td><button type="button" class="btn btn-secondary btn-sm" data-staff-edit="${esc(s.id)}">Edit</button></td>
+            <td><button type="button" class="btn btn-secondary btn-sm" data-staff-edit="${esc(staffKey(s))}">${s.id ? 'Edit' : 'Give ID'}</button></td>
           </tr>`).join('')}</tbody></table></div>`
         : `<div class="empty"><h3>Nobody found</h3><span class="muted small">Try another name, or show everyone.</span></div>`}
         <p class="small muted" style="margin:0;padding:0 24px 20px;line-height:1.5">An Employee ID cannot be changed once it is saved: it is how the payout finds each person. Someone who has left can be marked not active, or deleted when they are no longer on the current month's payroll.</p>
       </section>`;
   }
+  /* ---------- Add person: Staff Directory, or this month's payroll only (owner, 2026-11-03) ---------- */
+  const monthIso = (label) => label.split(' ')[1] + '-' + String(MONTHS.indexOf(label.split(' ')[0]) + 1).padStart(2, '0');
+  function openAdd() {
+    state.add = { step: 'choose', employeeId: '', store: '', days: [{ date: '', hours: '' }], saving: false, error: '' };
+    renderAdd();
+    document.getElementById('add-dialog').showModal();
+  }
+  function renderAdd() {
+    const a = state.add;
+    const body = document.getElementById('add-body');
+    const fromJibble = !!(DATA.monthTab && DATA.monthTab.fromJibble);
+    if (a.step === 'choose') {
+      body.innerHTML = `
+        <p style="margin:0;line-height:1.5">Who are you adding?</p>
+        <button type="button" class="choice" data-add-choice="staff"><strong>A new staff member</strong><span class="small muted">Adds them to the Staff Directory, with their Employee ID, store, email and hourly rate. Do this once per person.</span></button>
+        <button type="button" class="choice" data-add-choice="month"${fromJibble ? '' : ' disabled'}><strong>Someone to ${esc(DATA.period)} only</strong><span class="small muted">${fromJibble
+          ? 'Adds a person from the Staff Directory to this month’s payroll, with their days and hours. Use it for someone who is not in Jibble.'
+          : 'This month’s tab was made by hand, so add them in the spreadsheet.'}</span></button>
+        <div class="dialog-actions"><button type="button" class="btn btn-secondary" data-close="add-dialog">Cancel</button></div>`;
+      return;
+    }
+    const iso = monthIso(DATA.period);
+    const last = new Date(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)), 0).getDate();
+    const people = DATA.staff.filter((s) => s.id && s.active && !DATA.employees.some((e) => e.id === s.id)).sort((x, y) => x.name.localeCompare(y.name));
+    const total = a.days.reduce((n, d) => n + (HOURS_RE.test(String(d.hours).trim()) ? Number(d.hours) : 0), 0);
+    body.innerHTML = `
+      <p class="small muted" style="margin:0;line-height:1.5">Their rows go at the end of the “${esc(DATA.period)}” tab, laid out like everyone else’s. Wages use their Hourly Rate from the Staff Directory. If the month is filled from Jibble again, only people in Jibble are kept.</p>
+      <div class="form">
+        <div class="field full"><label for="am-person">Person <span class="req">*</span></label>
+          <select class="select" id="am-person" data-af="employeeId"><option value="">Choose from the Staff Directory…</option>${people.map((s) => `<option value="${esc(s.id)}"${a.employeeId === s.id ? ' selected' : ''}>${esc(s.name)} · ${esc(s.id)}${s.rate ? ' · RM ' + esc(s.rate) + '/h' : ' · no rate yet'}</option>`).join('')}</select>
+          ${people.length ? '' : '<span class="hint">Everyone active in the Staff Directory is already on this month. Add a new staff member first.</span>'}</div>
+        <div class="field"><label for="am-store">Store <span class="req">*</span></label>
+          <select class="select" id="am-store" data-af="store"><option value="">Choose…</option>${['SS18', 'IOI'].map((s) => `<option${a.store === s ? ' selected' : ''}>${s}</option>`).join('')}</select></div>
+      </div>
+      <div class="field"><span>Days worked <span class="req">*</span></span>
+        <div class="list-edit">${a.days.map((d, i) => `
+          <div class="day-row">
+            <label class="sr-only" for="am-date-${i}">Date</label><input class="input" type="date" id="am-date-${i}" data-day-i="${i}" data-day-f="date" min="${iso}-01" max="${iso}-${String(last).padStart(2, '0')}" value="${esc(d.date)}">
+            <label class="sr-only" for="am-hours-${i}">Hours</label><input class="input" id="am-hours-${i}" data-day-i="${i}" data-day-f="hours" inputmode="decimal" placeholder="Hours, e.g. 7.5" value="${esc(d.hours)}">
+            <button type="button" class="icon-btn" data-rm-day="${i}" aria-label="Remove this day"${a.days.length === 1 ? ' disabled' : ''}>${icon.trash}</button>
+          </div>`).join('')}
+          <button type="button" class="link-btn" data-add-day style="align-self:flex-start">${icon.plus}Add a day</button>
+        </div>
+        <span class="small muted" id="am-total">${a.days.length} day${a.days.length === 1 ? '' : 's'} · ${total.toFixed(2)} hours</span></div>
+      ${a.error ? `<div class="notice error">${icon.alert}<span class="grow">${esc(a.error)}</span></div>` : ''}
+      <div class="dialog-actions">
+        <button type="button" class="btn btn-quiet" data-add-back style="margin-right:auto">← Back</button>
+        <button type="button" class="btn btn-secondary" data-close="add-dialog">Cancel</button>
+        <button type="button" class="btn btn-primary" id="add-save"${a.saving ? ' disabled' : ''}>${a.saving ? '<span class="spinner sm" aria-hidden="true"></span>Adding…' : 'Add to ' + esc(DATA.period)}</button>
+      </div>`;
+  }
+  function addProblem() {
+    const a = state.add;
+    if (!a.employeeId) return 'Choose the person.';
+    if (!a.store) return 'Choose the store.';
+    const iso = monthIso(DATA.period);
+    for (const d of a.days) {
+      if (!d.date || d.date.slice(0, 7) !== iso) return 'Every day needs a date in ' + DATA.period + '.';
+      if (!HOURS_RE.test(String(d.hours).trim()) || Number(d.hours) <= 0 || Number(d.hours) > 24) return 'Every day needs its hours, like 7.5 (up to 24).';
+    }
+    if (new Set(a.days.map((d) => d.date)).size !== a.days.length) return 'A date is in the list twice.';
+    return '';
+  }
+  async function saveAdd() {
+    const a = state.add;
+    a.error = addProblem();
+    if (a.error) { renderAdd(); return; }
+    a.saving = true; renderAdd();
+    try {
+      const res = await call('addToMonth', { period: DATA.period, person: { employeeId: a.employeeId, store: a.store,
+        days: a.days.map((d) => ({ date: d.date, hours: String(d.hours).trim() })) } });
+      document.getElementById('add-dialog').close();
+      await load(DATA.period, { message: res.message });
+    } catch (err) {
+      a.saving = false; a.error = 'Not added: ' + errText(err); renderAdd();
+    }
+  }
+
   /** The edit window; id null = add a new person. */
   function openStaff(id) {
     const adding = id === null;
@@ -1502,21 +1746,29 @@
     state.staff.editId = adding ? null : id;
     document.getElementById('staff-title').textContent = adding ? 'Add a person' : 'Edit ' + s.name;
     const known = [...new Set(DATA.staff.map((x) => x.store).filter(Boolean).concat(['SS18', 'IOI']))].sort();
+    const needsId = !adding && !s.id;
+    const lockSvg = icon.lock.replace('width="18" height="18"', 'width="11" height="11"');
+    // Jibble people with hours this month who are not linked yet: pick by name instead of pasting the long ID.
+    const jibbleList = (store) => `<datalist id="sf-${store.toLowerCase()}-list">${(DATA.jibble.unmatched || []).filter((u) => u.store === store)
+      .map((u) => `<option value="${esc(u.jibbleId)}">${esc(u.jibbleName)}${u.hours ? ' · ' + esc(u.hours) + ' h this month' : ''}</option>`).join('')}</datalist>`;
+    const req = '<span class="req" title="Required">*</span>';
     document.getElementById('staff-body').innerHTML = `
       <div class="form">
-        ${adding
-          ? `<div class="field"><label for="sf-id">Employee ID</label><input class="input" id="sf-id" placeholder="e.g. 031" autocomplete="off"></div>
-             <div class="field"><label for="sf-internalId">Internal Staff ID <span class="muted">(optional)</span></label><input class="input" id="sf-internalId" autocomplete="off"></div>`
-          : `<div class="field"><span>Employee ID</span><div class="locked"><span>${esc(s.id)}</span><span class="calc">${icon.lock.replace('width="18" height="18"', 'width="11" height="11"')}Not changeable</span></div></div>`}
-        <div class="field"><label for="sf-name">Name</label><input class="input" id="sf-name" value="${esc(s.name)}"></div>
-        <div class="field"><label for="sf-alias">Payment Slip Name Alias</label><input class="input" id="sf-alias" value="${esc(s.alias)}"></div>
-        <div class="field"><label for="sf-email">Employee Email</label><input class="input" type="email" id="sf-email" value="${esc(s.email)}"></div>
-        <div class="field"><label for="sf-store">Store</label><input class="input" id="sf-store" list="sf-stores" value="${esc(s.store)}"><datalist id="sf-stores">${known.map((x) => `<option value="${esc(x)}">`).join('')}</datalist></div>
-        <div class="field"><label for="sf-rate">Hourly Rate</label><div class="money-in"><span>RM</span><input class="input" id="sf-rate" inputmode="decimal" value="${esc(s.rate)}"></div></div>
-        <div class="field"><label for="sf-ss18">Jibble ID (SS18)</label><input class="input" id="sf-ss18" value="${esc(s.ss18)}"></div>
-        <div class="field"><label for="sf-ioi">Jibble ID (IOI)</label><input class="input" id="sf-ioi" value="${esc(s.ioi)}"></div>
+        ${adding || needsId
+          ? `<div class="field"><label for="sf-id">Employee ID ${req}</label><input class="input" id="sf-id" value="${esc(DATA.staffNextId || '')}" placeholder="e.g. 031" autocomplete="off">
+               <span class="hint">Filled in for you: the next free number${needsId ? '. This row has no Employee ID yet' : ''}. You can change it. Once saved, it never changes.</span></div>
+             ${adding ? '<div class="field"><label for="sf-internalId">Internal Staff ID <span class="muted">(optional)</span></label><input class="input" id="sf-internalId" autocomplete="off"></div>' : ''}`
+          : `<div class="field"><span>Employee ID</span><div class="locked"><span>${esc(s.id)}</span><span class="calc">${lockSvg}Not changeable</span></div></div>`}
+        <div class="field"><label for="sf-name">Name ${req}</label><input class="input" id="sf-name" value="${esc(s.name)}"></div>
+        <div class="field"><label for="sf-alias">Payment Slip Name Alias</label><input class="input" id="sf-alias" value="${esc(s.alias)}"><span class="hint">The short name on their payment slip file, if different.</span></div>
+        <div class="field"><label for="sf-email">Employee Email ${req}</label><input class="input" type="email" id="sf-email" value="${esc(s.email)}"></div>
+        <div class="field"><label for="sf-store">Store ${req}</label><input class="input" id="sf-store" list="sf-stores" value="${esc(s.store)}"><datalist id="sf-stores">${known.map((x) => `<option value="${esc(x)}">`).join('')}</datalist></div>
+        <div class="field"><label for="sf-rate">Hourly Rate ${req}</label><div class="money-in"><span>RM</span><input class="input" id="sf-rate" inputmode="decimal" value="${esc(s.rate)}"></div></div>
+        <div class="field"><label for="sf-ss18">Jibble ID (SS18)</label><input class="input" id="sf-ss18" list="sf-ss18-list" value="${esc(s.ss18)}" autocomplete="off">${jibbleList('SS18')}</div>
+        <div class="field"><label for="sf-ioi">Jibble ID (IOI)</label><input class="input" id="sf-ioi" list="sf-ioi-list" value="${esc(s.ioi)}" autocomplete="off">${jibbleList('IOI')}</div>
         <label class="field" style="flex-direction:row;align-items:center;gap:10px"><input type="checkbox" id="sf-active"${s.active ? ' checked' : ''}> Active</label>
       </div>
+      <p class="small muted" style="margin:0;line-height:1.5"><strong>Jibble ID:</strong> how their Jibble hours find them. Click the box and pick their name from Jibble’s list (people with hours this month who are not linked yet), or paste the ID. Without it, their hours only come in when their name is exactly the same in Jibble. Someone at both stores needs both.</p>
       ${adding ? '' : '<p class="small muted" style="margin:0;line-height:1.5">Changing the email changes where this person\'s payout email goes, so it asks for the password again if you signed in more than 5 minutes ago.</p>'}
       <div class="notice error" id="staff-error" hidden>${icon.alert}<span class="grow"></span></div>
       <div class="dialog-actions">
@@ -1525,7 +1777,7 @@
         <button type="button" class="btn btn-primary" id="staff-save">${adding ? 'Add person' : 'Save'}</button>
       </div>`;
     document.getElementById('staff-dialog').showModal();
-    document.getElementById(adding ? 'sf-id' : 'sf-name').focus();
+    document.getElementById(adding ? 'sf-name' : needsId ? 'sf-id' : 'sf-name').focus();
   }
   function staffError(text) {
     const box = document.getElementById('staff-error');
@@ -1540,23 +1792,38 @@
     const btn = document.getElementById('staff-save');
     const label = btn.textContent;
     let request;
+    // Owner, 2026-11-03: what a payout needs is required when adding someone.
+    const missing = [['name', 'the name'], ['store', 'the store'], ['email', 'the email'], ['rate', 'the Hourly Rate']]
+      .filter(([k]) => adding && !val(k)).map(([, l]) => l);
+    if (missing.length) { staffError('Fill in ' + missing.join(', ') + '.'); return; }
+    if ((adding || !s.id) && val('id') && !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,19}$/.test(val('id'))) { staffError('The Employee ID can have letters and numbers only, like 031.'); return; }
+    if (val('rate') && badAmount(val('rate'))) { staffError('Hourly Rate must be an amount like 10 or 10.50.'); return; }
+    let first = null;   // a row with no Employee ID gets its ID first, then the other changes
     if (adding) {
       const person = { id: val('id'), internalId: val('internalId') };
       STAFF_FIELDS.forEach(([k]) => { person[k] = val(k); });
-      if (!person.id || !person.name) { staffError('Type the Employee ID and the name.'); return; }
       request = ['addStaff', { person }];
     } else {
+      if (!s.id) first = ['setStaffId', { row: s.row, name: s.name, id: val('id') }];
       const changes = {};
       STAFF_FIELDS.forEach(([k]) => { if (val(k) !== (k === 'active' ? s.active : String(s[k] || ''))) changes[k] = val(k); });
-      if (!Object.keys(changes).length) { document.getElementById('staff-dialog').close(); return; }
+      if (!Object.keys(changes).length && !first) { document.getElementById('staff-dialog').close(); return; }
       const expected = {};
       STAFF_FIELDS.forEach(([k]) => { expected[k] = s[k]; });
-      request = ['saveStaff', { employeeId: s.id, expected, changes }];
+      request = Object.keys(changes).length ? ['saveStaff', { employeeId: s.id, expected, changes }] : null;
     }
     btn.disabled = true; btn.innerHTML = '<span class="spinner sm" aria-hidden="true"></span>Saving…';
     try {
-      const res = await call(request[0], request[1]);
+      let res;
+      if (first) {
+        res = await call(first[0], first[1]);
+        DATA.staff = res.staff;
+        const now = res.staff.find((x) => x.row === s.row && x.name === s.name);
+        if (request) request[1].employeeId = now.id;
+      }
+      if (request) res = await call(request[0], request[1]);
       DATA.staff = res.staff;
+      if (res.staffNextId) DATA.staffNextId = res.staffNextId;
       document.getElementById('staff-dialog').close();
       toast(res.message || 'Saved.', 'ok');
     } catch (err) {
@@ -1669,8 +1936,8 @@
     } catch (err) { toast('Not deleted: ' + errText(err), 'error'); }
   }
 
-  const ROUTES = { overview, payroll, slips, checks, settings, send, history, staff: staffPage, tools: toolsPage };
-  const TITLES = { overview: 'Overview', payroll: 'Payroll Management', slips: 'Payment Slips', checks: 'Jibble & Documents', settings: 'Settings', send: 'Send Center', history: 'History', staff: 'Staff Directory', tools: 'Tools' };
+  const ROUTES = { overview, payroll, slips, checks, settings, send, history, staff: staffPage, tools: toolsPage, control: controlPage };
+  const TITLES = { overview: 'Overview', payroll: 'Payroll Management', slips: 'Payment Slips', checks: 'Jibble & Documents', settings: 'Settings', send: 'Send Center', history: 'History', staff: 'Staff Directory', tools: 'Tools', control: 'Payout Control' };
   const view = document.getElementById('view');
   function currentRoute() {
     const r = (location.hash || '#overview').slice(1);
@@ -1689,7 +1956,7 @@
     view.innerHTML = `
       <section class="card loading-card" role="status" aria-live="polite">
         <div class="loading-head"><span class="spinner" aria-hidden="true"></span>Loading payroll information</div>
-        <div class="progress" aria-hidden="true"></div>
+        <div class="load-bar" aria-hidden="true"></div>
         <div class="loading-hint" id="loading-hint">${esc(loadHint(t0))}</div>
         <div class="loading-time" id="loading-time">${secondsSince(t0)} · usually 5 to 15 seconds</div>
       </section>
@@ -1794,6 +2061,25 @@
 
     const closeD = t.closest('[data-close]');
     if (closeD) { document.getElementById(closeD.dataset.close).close(); return; }
+    if (t.closest('[data-action="add-person"]')) { openAdd(); return; }
+    if (t.closest('[data-action="control-refresh"]')) { state.control.error = null; state.control.rows = null; loadControl(); render(); return; }
+    const pcDoc = t.closest('[data-pc-doc]');
+    if (pcDoc) {
+      const [id, kind] = pcDoc.dataset.pcDoc.split('|');
+      openUrl('getDocumentUrl', { period: DATA.period, employeeId: id, kind }, kind === 'slip' ? 'The Payment Slip' : 'The Payment Calculation PDF');
+      return;
+    }
+    const choice = t.closest('[data-add-choice]');
+    if (choice) {
+      if (choice.dataset.addChoice === 'staff') { document.getElementById('add-dialog').close(); openStaff(null); }
+      else { state.add.step = 'month'; renderAdd(); document.getElementById('am-person').focus(); }
+      return;
+    }
+    if (t.closest('[data-add-back]')) { state.add.step = 'choose'; state.add.error = ''; renderAdd(); return; }
+    if (t.closest('[data-add-day]')) { state.add.days.push({ date: '', hours: '' }); renderAdd(); document.getElementById('am-date-' + (state.add.days.length - 1)).focus(); return; }
+    const rmDay = t.closest('[data-rm-day]');
+    if (rmDay) { state.add.days.splice(Number(rmDay.dataset.rmDay), 1); renderAdd(); return; }
+    if (t.closest('#add-save')) { saveAdd(); return; }
     if (t.closest('#staff-save')) { saveStaff(); return; }
     if (t.closest('#staff-delete')) { deleteStaff(); return; }
 
@@ -1806,8 +2092,8 @@
     const edit = t.closest('[data-edit]');
     if (edit) {
       state.editing = edit.dataset.edit; state.draft = makeDraft(emp(state.openId), state.editing); state.saveError = null;
-      const target = { payout: 'd-payout', payment: 'd-docs' }[state.editing];
-      renderDrawer({ scrollTo: target, focus: { payout: 'f-com', payment: 'f-verified' }[state.editing] });
+      const target = { payout: 'd-payout', payment: 'd-docs', hours: 'd-hours' }[state.editing];
+      renderDrawer({ scrollTo: target, focus: { payout: 'f-com', payment: 'f-verified', hours: 'f-hours' }[state.editing] });
       return;
     }
     const addRow = t.closest('[data-add-row]');
@@ -1816,6 +2102,7 @@
     if (rmRow) { state.draft[rmRow.dataset.removeRow].splice(Number(rmRow.dataset.i), 1); renderDrawer(); return; }
     if (t.closest('[data-action="cancel-edit"]')) { state.editing = null; state.draft = null; state.saveError = null; renderDrawer(); return; }
     if (t.closest('[data-action="save-edit"]')) { saveEdit(); return; }
+    if (t.closest('[data-action="remove-from-month"]')) { removeFromMonth(); return; }
     const doc = t.closest('[data-doc]');
     if (doc) { openUrl('getDocumentUrl', { period: DATA.period, employeeId: state.openId, kind: doc.dataset.doc }, doc.dataset.doc === 'slip' ? 'The Payment Slip' : 'The Payment Calculation PDF'); return; }
     const sheet = t.closest('[data-sheet]');
@@ -1853,6 +2140,7 @@
       if (g === 'branch') state.branch = v;
       if (g === 'history-mode') state.history.mode = v;
       if (g === 'staff-show') state.staff.show = v;
+      if (g === 'pc-store') state.control.store = v;
       render();
       const again = view.querySelector(`[data-seg="${g}"][data-value="${v}"]`);
       if (again) again.focus();
@@ -1931,6 +2219,23 @@
     }
   });
   document.getElementById('verify-dialog').addEventListener('close', () => { state.verify = null; render(); });
+  // The Add person window: typing updates its state; only the total line is redrawn while typing.
+  const addDialog = document.getElementById('add-dialog');
+  const addInput = (e) => {
+    const t = e.target, a = state.add;
+    if (!a) return;
+    if (t.dataset.af) a[t.dataset.af] = t.value;
+    if (t.dataset.dayF) a.days[Number(t.dataset.dayI)][t.dataset.dayF] = t.value;
+    if (t.dataset.af === 'employeeId' && t.value && !a.store) {
+      const s = DATA.staff.find((x) => x.id === t.value);
+      if (s && (s.store === 'SS18' || s.store === 'IOI')) { a.store = s.store; document.getElementById('am-store').value = s.store; }
+    }
+    const total = a.days.reduce((n, d) => n + (HOURS_RE.test(String(d.hours).trim()) ? Number(d.hours) : 0), 0);
+    const line = document.getElementById('am-total');
+    if (line) line.textContent = a.days.length + ' day' + (a.days.length === 1 ? '' : 's') + ' · ' + total.toFixed(2) + ' hours';
+  };
+  addDialog.addEventListener('input', addInput);
+  addDialog.addEventListener('change', addInput);
   view.addEventListener('change', (e) => {
     const t = e.target;
     if (t.matches('[data-period]')) {
@@ -1940,6 +2245,7 @@
     }
     if (t.id === 'pm-status') { state.payroll.status = t.value; render(); }
     if (t.id === 'pm-pay') { state.payroll.pay = t.value; render(); }
+    if (t.id === 'pc-status') { state.control.status = t.value; render(); }
     if (t.id === 'history-period') { state.history.period = t.value; render(); }
     if (t.id === 'slip-input') { addSlipFiles(t.files); t.value = ''; }
     if (t.dataset.verify) { const p = emp(t.dataset.verify); openVerify(p, !p.verified); }
@@ -1973,7 +2279,12 @@
       refreshFooter();
     } else if (t.dataset.draft && t.type !== 'checkbox') {
       state.draft[t.dataset.draft] = t.value;
-      if (t.dataset.draft === 'commission') t.setAttribute('aria-invalid', String(badAmount(t.value)));
+      if (t.dataset.draft === 'commission' || t.dataset.draft === 'rate') t.setAttribute('aria-invalid', String(badAmount(t.value)));
+      if (t.dataset.draft === 'hours') t.setAttribute('aria-invalid', String(t.value.trim() !== '' && !HOURS_RE.test(t.value.trim())));
+      if (state.editing === 'hours') {
+        const w = wagesOf(state.draft.hours, state.draft.rate);
+        document.getElementById('f-wages').textContent = w == null ? 'Blank until hours and rate are filled in' : rmText(w);
+      }
       refreshFooter();
     }
   });

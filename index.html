@@ -181,9 +181,9 @@ h1, h2, h3 { font-family: var(--font-display); font-weight: normal; margin: 0; }
 .loading-head { display: flex; align-items: center; gap: var(--space-3); font-weight: 600; color: var(--ink); }
 .loading-hint { color: var(--ink-soft); font-size: 14px; min-height: 1.5em; }
 .loading-time { color: var(--ink-soft); font-size: 13px; font-variant-numeric: tabular-nums; }
-.progress, .busy-bar { overflow: hidden; }
-.progress { position: relative; height: 6px; border-radius: var(--radius-pill); background: var(--line); }
-.progress::after, .busy-bar::after { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 40%; border-radius: inherit; background: var(--brown); animation: sweep 1.4s ease-in-out infinite; }
+.load-bar, .busy-bar { overflow: hidden; }
+.load-bar { position: relative; height: 6px; border-radius: var(--radius-pill); background: var(--line); }
+.load-bar::after, .busy-bar::after { content: ""; position: absolute; top: 0; bottom: 0; left: 0; width: 40%; border-radius: inherit; background: var(--brown); animation: sweep 1.4s ease-in-out infinite; }
 @keyframes sweep { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
 /* A thin bar across the top while the page waits for the server (saving, refreshing, sending). */
 .busy-bar { position: fixed; top: 0; left: 0; right: 0; height: 3px; z-index: 200; background: var(--brown-tint); }
@@ -376,7 +376,7 @@ dialog::backdrop { background: rgba(58,46,34,.55); }
 /* Progress must still move when Windows "Animation effects" is off (owner, 2026-10-27: "the loading is not moving"). Slower, but moving. */
 @media (prefers-reduced-motion: reduce) {
   .spinner { animation: spin 1.6s linear infinite !important; }
-  .progress::after, .busy-bar::after { animation: sweep 2.4s ease-in-out infinite !important; }
+  .load-bar::after, .busy-bar::after { animation: sweep 2.4s ease-in-out infinite !important; }
 }
 
 @media (max-width: 1000px) {
@@ -477,6 +477,12 @@ kbd { display: inline-block; min-width: 20px; padding: 0 5px; border: 1px solid 
 @media (max-width: 760px) { .cfg-row { grid-template-columns: minmax(0, 1fr); } .cfg-group { padding-left: 16px; padding-right: 16px; } }
 #email-dialog { width: min(720px, calc(100vw - 32px)); }
 #staff-dialog { width: min(640px, calc(100vw - 32px)); }
+#add-dialog { width: min(640px, calc(100vw - 32px)); }
+.choice { display: flex; flex-direction: column; gap: 4px; text-align: left; padding: 16px 18px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); cursor: pointer; font: inherit; color: inherit; }
+.choice:hover, .choice:focus-visible { border-color: var(--brown); background: var(--brown-tint); }
+.day-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 120px) 40px; gap: 10px; align-items: center; }
+.req { color: var(--failed-ink); }
+.steps-guide { display: flex; flex-wrap: wrap; gap: 8px; }
 #confirm-dialog { width: min(600px, calc(100vw - 32px)); }
 .tool-row { display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: center; padding: 14px 0; border-bottom: 1px solid var(--line, #E5DED3); }
 .tool-row:last-child { border-bottom: 0; }
@@ -524,6 +530,9 @@ kbd { display: inline-block; min-width: 20px; padding: 0 5px; border: 1px solid 
         <a href="#staff" data-route="staff">
           <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2.5"/><path d="M5.5 16.5c.6-1.8 2-2.8 3.5-2.8s2.9 1 3.5 2.8"/><path d="M15 9h3M15 13h3"/></svg>
           Staff Directory</a>
+        <a href="#control" data-route="control">
+          <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="m9 14 2 2 4-4"/></svg>
+          Payout Control</a>
         <a href="#send" data-route="send">
           <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/></svg>
           Send Center</a>
@@ -661,6 +670,12 @@ kbd { display: inline-block; min-width: 20px; padding: 0 5px; border: 1px solid 
   <div class="dialog-body" id="staff-body"></div>
 </dialog>
 
+<!-- Add person: to the Staff Directory, or to this month's payroll only (owner, 2026-11-03) -->
+<dialog id="add-dialog" aria-labelledby="add-title">
+  <div class="dialog-head"><h2 id="add-title">Add person</h2><button type="button" class="icon-btn" data-close="add-dialog" aria-label="Close">✕</button></div>
+  <div class="dialog-body" id="add-body"></div>
+</dialog>
+
 <!-- Email preview -->
 <dialog id="email-dialog" aria-labelledby="email-title">
   <div class="dialog-head"><h2 id="email-title">Email preview</h2><button type="button" class="icon-btn" data-close="email-dialog" aria-label="Close">✕</button></div>
@@ -688,8 +703,8 @@ kbd { display: inline-block; min-width: 20px; padding: 0 5px; border: 1px solid 
   </div>
 </dialog>
 
-<script src="config.js?v=6c279c3"></script>
-<script src="slip-match.js?v=6c279c3"></script>
-<script src="app.js?v=6c279c3"></script>
+<script src="config.js?v=cc89bfa"></script>
+<script src="slip-match.js?v=cc89bfa"></script>
+<script src="app.js?v=cc89bfa"></script>
 </body>
 </html>

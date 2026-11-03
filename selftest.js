@@ -239,14 +239,73 @@
 
     // 8c. Add and delete people
     $('[data-action="staff-add"]').click();
-    check('add opens an empty form with an Employee ID box', await until(() => $('#staff-dialog').open && $('#sf-id') && $('#sf-id').value === ''));
-    $('#sf-id').value = 'MCH-024'; $('#sf-name').value = 'Someone New';
+    // Owner, 2026-11-03: the Employee ID is filled in with the next free number; store, email and rate are required.
+    check('add opens a form with the next Employee ID filled in', await until(() => $('#staff-dialog').open && $('#sf-id') && $('#sf-id').value === P.data.staffNextId && P.data.staffNextId === '001'));
+    $('#sf-name').value = 'Someone New';
+    $('#staff-save').click();
+    check('the store, email and Hourly Rate are required', await until(() => !$('#staff-error').hidden && /the store, the email, the Hourly Rate/.test($('#staff-error').textContent)));
+    $('#sf-store').value = 'SS18'; $('#sf-email').value = 'someone.new@example.com'; $('#sf-rate').value = '9.50';
+    $('#sf-id').value = 'MCH-024';
     $('#staff-save').click();
     check('an Employee ID already in use is refused', await until(() => !$('#staff-error').hidden && /already in the Staff Directory/.test($('#staff-error').textContent)));
     $('#sf-id').value = 'MCH-040';
-    $('#sf-store').value = 'SS18';
     $('#staff-save').click();
     check('a new person is added and listed', await until(() => !$('#staff-dialog').open && P.data.staff.some((s) => s.id === 'MCH-040')));
+    check('active people without a Jibble ID are flagged', /active people have no Jibble ID/.test($('#view').textContent) && $$('.badge').some((b) => b.textContent === 'No Jibble ID'));
+    $('[data-staff-edit="MCH-028"]').click();
+    check('the Jibble ID box offers Jibble\'s unlinked names for that store', await until(() => $('#staff-dialog').open && $$('#sf-ioi-list option').length === 1 &&
+      $$('#sf-ioi-list option').some((o) => o.value === 'IOI-0301' && /Adlina H/.test(o.textContent)) && $$('#sf-ss18-list option').length === 0));
+    $('#staff-dialog').close();
+
+    // 8c2. Hours, adding and removing someone in a month, Payout Control (owner, 2026-11-03)
+    Object.assign(P.state.payroll, { q: '', store: 'all', status: 'all', pay: 'all' });
+    check('payroll opens for the hours checks', await go('#payroll', 'Payroll Management'));
+    $('[data-open="MCH-027"]').click();
+    check('the hours can be edited for someone not Paid', await until(() => !!$('[data-edit="hours"]')));
+    $('[data-edit="hours"]').click();
+    await until(() => !!$('#f-hours'));
+    input($('#f-hours'), '121'); input($('#f-rate'), '10.50');
+    check('Wages is worked out as you type (121 × 10.50)', $('#f-wages').textContent === 'RM1,270.50', $('#f-wages').textContent);
+    check('…with the Jibble warning', /filled from Jibble again/.test($('#drawer').textContent));
+    $('[data-action="save-edit"]').click();
+    check('saved: the new Wages and Total Payout are shown', await until(() => person('MCH-027').wages === 'RM 1,270.50' && !P.state.editing), person('MCH-027').wages);
+    P.state.openId = null; P.renderDrawer();
+    $('[data-open="MCH-024"]').click();
+    check('someone marked Paid cannot have their hours changed', await until(() => /Arjun/.test($('#drawer').textContent)) && !$('[data-edit="hours"]') && !$('[data-action="remove-from-month"]'));
+    P.state.openId = null; P.renderDrawer();
+    $('[data-action="add-person"]').click();
+    check('Add person asks: Staff Directory, or this month only', await until(() => $('#add-dialog').open && $$('[data-add-choice]').length === 2));
+    $('[data-add-choice="month"]').click();
+    check('this month only: only Staff Directory people not already on the month are offered', await until(() => !!$('#am-person')) &&
+      $$('#am-person option').some((o) => o.value === 'MCH-030') && !$$('#am-person option').some((o) => o.value === 'MCH-001'));
+    $('#add-save').click();
+    check('the person, store and days are required', await until(() => /Choose the person/.test($('#add-body').textContent)));
+    change($('#am-person'), 'MCH-030');
+    check('the store comes from the Staff Directory', $('#am-store').value === 'IOI');
+    change($('#am-date-0'), '2026-10-05'); input($('#am-hours-0'), '6');
+    $('[data-add-day]').click();
+    change($('#am-date-1'), '2026-10-06'); input($('#am-hours-1'), '7.5');
+    check('the total hours add up as you type', /2 days · 13\.50 hours/.test($('#am-total').textContent), $('#am-total').textContent);
+    $('#add-save').click();
+    check('added to this month and listed', await until(() => !$('#add-dialog').open && !!person('MCH-030') && person('MCH-030').hours === '13.50'));
+    $('[data-open="MCH-030"]').click();
+    await until(() => !!$('[data-action="remove-from-month"]'));
+    $('[data-action="remove-from-month"]').click();
+    await until(() => $('#confirm-dialog').open);
+    input($('#confirm-word'), 'REMOVE');
+    $('#confirm-go').click();
+    check('removing needs REMOVE typed, then they are gone from the month (still in the Staff Directory)', await until(() => !person('MCH-030')) &&
+      P.data.staff.some((s) => s.id === 'MCH-030'));
+    check('Payout Control opens', await go('#control', 'Payout Control'));
+    check('it lists the prepared people with their status and Manager Verified', await until(() => $$('#view table.log tbody tr').length >= 8) &&
+      /Ready to send\?/.test($('#view').textContent) && !!$('#view a[href="#send"]'));
+    $('#pc-status').value = 'Sent'; $('#pc-status').dispatchEvent(new Event('change', { bubbles: true }));
+    check('filtered by status', await until(() => $$('#view table.log tbody tr').length === 2), $$('#view table.log tbody tr').length);
+    check('Overview offers the next step as one button', await go('#overview', 'Overview') && /Next step:/.test(($('#next-step-go') || {}).textContent || ''));
+    // The month's steps are readable (a loading-bar style once squashed them to a thin line).
+    check('the month\'s steps show their names and open their pages', $$('ol.progress li').length === 9 &&
+      $('ol.progress').getBoundingClientRect().height > 20 && !!$('ol.progress a[href="#slips"]'), $('ol.progress') && $('ol.progress').getBoundingClientRect().height);
+    check('back to the Staff Directory', await go('#staff', 'Staff Directory'));
     $('[data-staff-edit="MCH-001"]').click();
     await until(() => $('#staff-dialog').open);
     $('#staff-delete').click();
@@ -287,9 +346,11 @@
     check('Jibble page opens again', await go('#checks', 'Jibble & Documents'));
     check('the next month is offered', $('#ms-month').value === '2026-11' && /Set up November 2026/.test($('[data-action="month-setup"]').textContent));
     $('[data-action="month-setup"]').click();
-    check('setting up a month asks first', await until(() => $('#confirm-dialog').open && /November 2026/.test($('#confirm-body').textContent)));
+    check('setting up a month asks first, with the Staff Directory question the menu asks', await until(() => $('#confirm-dialog').open && /November 2026/.test($('#confirm-body').textContent)) &&
+      /Also fill in the Staff Directory/.test($('#confirm-body').textContent) && /Nur Adlina/.test($('#confirm-body').textContent) && $('#ms-dir').checked);
     $('#confirm-go').click();
     check('November 2026 is set up and opened', await until(() => P.data.period === 'November 2026' && P.data.periods.includes('November 2026') && !P.state.loading, 6000));
+    check('the Jibble ID shown was filled into the Staff Directory', P.data.staff.find((s) => s.id === 'MCH-028').ioi === 'IOI-0301');
     await until(() => $('#confirm-dialog').open);
     $('#confirm-dialog').close();
     check('filling November again needs "replace"', await go('#checks', 'Jibble & Documents') && (change($('#ms-month'), '2026-11'), await until(() => !!$('#ms-replace'))));
@@ -342,7 +403,7 @@
     const reload = P.load('October 2026', { full: true });
     // Owner, 2026-10-27: "the loading is not moving… add loading so the user understands".
     check('a full load shows a moving bar, what is happening and the seconds so far',
-      !!$('.loading-card .progress') && /Connecting/.test($('#loading-hint').textContent) && /\d+ s/.test($('#loading-time').textContent) && $$('.skeleton').length === 3);
+      !!$('.loading-card .load-bar') && /Connecting/.test($('#loading-hint').textContent) && /\d+ s/.test($('#loading-time').textContent) && $$('.skeleton').length === 3);
     check('the top bar shows while the server is asked', !$('#busy-bar').hidden);
     await reload;
     check('… and both go away when the data arrives', !$('.loading-card') && await until(() => $('#busy-bar').hidden));
