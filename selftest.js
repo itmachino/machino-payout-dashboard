@@ -444,8 +444,8 @@
 
     // 8f. Tools: the spreadsheet's menus
     check('Tools opens', await go('#tools', 'Tools'));
-    check('every menu item is listed', ['Check System', '1. Prepare Payout', '2. Review Payouts', '3. Test Payout Email', '4. Pre-Send Check',
-      '5. Send Ready Employees', 'Setup & Repair', 'Delete a month tab'].every((x) => $('#view').textContent.includes(x)));
+    check('every menu item is listed', ['Check System', '1. Get Hours from Jibble', '2. Prepare Payout', '3. Review Payouts', '4. Test Payout Email', '5. Pre-Send Check',
+      '6. Send Ready Employees', 'Setup & Repair', 'Delete a month tab'].every((x) => $('#view').textContent.includes(x)));
     $('[data-action="tool-wages"]').click();
     check('Make Wages a formula asks first and says no amount changes', await until(() => $('#confirm-dialog').open && /Make Wages a formula/.test($('#confirm-title').textContent) &&
       /No amounts change/.test($('#confirm-body').textContent)), $('#confirm-body') && $('#confirm-body').textContent);
@@ -455,6 +455,18 @@
     await until(() => $('#confirm-dialog').open);
     $('#confirm-go').click();
     check('yes: it is done and the message says the pay now follows the sheet', await until(() => !!P.state.toast && /Wages as a formula/.test(P.state.toast.text)), P.state.toast && P.state.toast.text);
+    // 1. Get Hours from Jibble: the menu's one button. Any question it asks is answered "Cancel" here.
+    location.hash = '#tools';
+    await until(() => !!$('[data-action="jibble-all"]'));
+    $('[data-action="jibble-all"]').click();
+    const asked = [];
+    const jibbleDone = await until(() => {
+      if ($('#confirm-dialog').open) { asked.push($('#confirm-title').textContent); $('#confirm-dialog [data-close="confirm-dialog"].btn').click(); }
+      return location.hash === '#payroll' && !P.state.tools.jibbleBusy;
+    }, 6000);
+    check('1. Get Hours from Jibble asks before each change (Cancel = no), then opens Payroll Management (Needs fixing)', jibbleDone && asked.length >= 1 && asked.every((t) => /Update .* from Jibble\?|Make Wages a formula\?/.test(t)) &&
+      await go('#payroll', 'Payroll Management'), [jibbleDone, location.hash, asked.join(' / ')].join(' | '));
+    check('Tools again', await go('#tools', 'Tools'));
     $('[data-action="tool-check"]').click();
     check('Check System runs and shows its findings', await until(() => /Ready to prepare/.test($('#view').textContent)));
     $('[data-action="tool-ids"]').click();
@@ -471,7 +483,7 @@
     $('#confirm-go').click();
     check('a Jibble-made month with nobody Paid is deleted', await until(() => !P.data.periods.includes('November 2026') && !P.state.loading, 6000));
 
-    // 9. Send Center: 3. Test Payout Email and 5. Send Ready Employees (owner, 2026-10-27)
+    // 9. Send Center: 4. Test Payout Email and 6. Send Ready Employees (owner, 2026-10-27)
     window.DashboardPreview.saveConfiguration({ changes: { 'Current Payout Month': 'October', 'Current Payout Year': '2026' } });
     await P.load('October 2026', { full: true });
     check('send center opens', await go('#send', 'Send Center'));

@@ -976,15 +976,19 @@
       const go = document.getElementById('confirm-go');
       go.textContent = okLabel || 'OK';
       go.className = 'btn ' + (danger ? 'btn-danger' : 'btn-primary');
+      // Cancel and ✕ answer "no" themselves: the dialog's close event alone was seen not to arrive (headless Chrome).
+      const cancels = dlg.querySelectorAll('[data-close]');
       let settled = false;
       const done = (answer) => {
         if (settled) return;
         settled = true;
         go.onclick = null; dlg.onclose = null;
+        cancels.forEach((b) => { b.onclick = null; });
         if (dlg.open) dlg.close();
         resolve(answer);
       };
       go.onclick = () => done(true);
+      cancels.forEach((b) => { b.onclick = () => done(false); });
       // A "close" left over from the previous window arrives while this one is open: ignore it.
       dlg.onclose = () => { if (!dlg.open) done(false); };
       dlg.showModal();
@@ -1090,7 +1094,7 @@
                 ${w.employeeId ? `<button type="button" class="btn btn-secondary btn-sm" data-open="${esc(w.employeeId)}">Open</button>` : ''}
               </li>`).join('')}</ul>` : '<p class="muted small" style="margin:6px 0 0">No warnings.</p>'}
           </div>
-          <p class="small muted" style="margin:0;line-height:1.5">Hours are corrected in Jibble. Then use <strong style="color:var(--ink)">Jibble → Fill in a month from Jibble</strong> in the spreadsheet.</p>
+          <p class="small muted" style="margin:0;line-height:1.5">Hours are corrected in Jibble. Then use <strong style="color:var(--ink)">Machino Payout → 1. Get Hours from Jibble</strong> in the spreadsheet.</p>
         </div>
       </section>
       <section class="card" aria-labelledby="dt">
@@ -1220,7 +1224,7 @@
         <div class="card-body" style="padding-top:0">
           <ul class="ol-steps" style="list-style:disc">
             <li>This switch changes <strong>Test Mode</strong> in Configuration. The badge shows what Configuration holds, read back after every change.</li>
-            <li>Turning it off sends nothing. LIVE emails still need the Authorized Sender, the Pre-Send Check and <em>5. Send Ready Employees</em> in the spreadsheet.</li>
+            <li>Turning it off sends nothing. LIVE emails still need the Authorized Sender, the Pre-Send Check and <em>6. Send Ready Employees</em> in the spreadsheet.</li>
             <li>If Configuration is blank or unclear, Test Mode counts as ON.</li>
           </ul>
         </div>
@@ -1382,12 +1386,12 @@
       </section>
       <div class="split" style="align-items:stretch">
         <section class="card card-body main-col" aria-labelledby="tt" style="display:flex;flex-direction:column;gap:12px">
-          <h2 id="tt" style="font-size:20px">3. Test Payout Email</h2>
+          <h2 id="tt" style="font-size:20px">4. Test Payout Email</h2>
           <p class="muted" style="margin:0;line-height:1.5">Sends each email to the Test Email in Configuration only, with both attachments. No employee receives anything, and nothing is marked Sent.</p>
           <button type="button" class="btn btn-secondary" data-action="send-test" style="align-self:flex-start">${icon.mail}Send test emails</button>
         </section>
         <section class="card card-body side-col" aria-labelledby="lt" style="display:flex;flex-direction:column;gap:12px">
-          <h2 id="lt" style="font-size:20px">5. Send Ready Employees</h2>
+          <h2 id="lt" style="font-size:20px">6. Send Ready Employees</h2>
           <p class="muted" style="margin:0;line-height:1.5">${DATA.testMode ? 'Test Mode is ON, so these also go to the test inbox only.' : '<strong>LIVE:</strong> real emails to real employees, from the Authorized Sender. You type a confirmation first.'}</p>
           <button type="button" class="btn ${DATA.testMode ? 'btn-secondary' : 'btn-live'}" data-action="send-live" style="align-self:flex-start">${icon.send || icon.mail}Send to employees</button>
         </section>
@@ -2063,7 +2067,7 @@
     const ids = tl.ids;
     return `
       <header class="page-head">
-        <div class="title-block"><h1>Tools</h1><span class="small muted">The spreadsheet’s Machino Payout and Jibble menus, here. Each one runs the spreadsheet’s own code.</span></div>
+        <div class="title-block"><h1>Tools</h1><span class="small muted">The spreadsheet’s Machino Payout menu, here. Each one runs the spreadsheet’s own code.</span></div>
         <div class="tools">${refreshBtn()}</div>
       </header>
       ${toastHTML()}
@@ -2075,11 +2079,13 @@
               <strong>${tl.check.canPrepare ? 'Ready to prepare ' : 'Not ready to prepare '}${esc(tl.check.period)}</strong>
               ${tl.check.findings.length ? `<ul class="plain-list">${tl.check.findings.map((x) => `<li style="display:flex;gap:10px;align-items:flex-start;padding:8px 0"><span class="badge ${(LEVEL_VIEW[x.level] || LEVEL_VIEW.warn)[0]}">${(LEVEL_VIEW[x.level] || LEVEL_VIEW.warn)[1]}</span><div><strong class="small">${esc(x.title)}</strong>${x.detail ? `<div class="small muted">${esc(x.detail)}</div>` : ''}</div></li>`).join('')}</ul>` : '<span class="small muted">No problems found.</span>'}
               <span class="small muted">${esc(tl.check.note)}</span></div></li>` : ''}
-          ${row('1. Prepare Payout', 'Makes the Payment Calculations and updates Payout Control. Never sends an email.', '<button type="button" class="btn btn-secondary btn-sm" data-action="prepare">Prepare payouts</button>')}
-          ${row('2. Review Payouts', 'Check each person and tick Manager Verified.', '<a class="btn btn-secondary btn-sm" href="#payroll">Open Payroll Management</a>')}
-          ${row('3. Test Payout Email', 'Sends to the test inbox only.', '<button type="button" class="btn btn-secondary btn-sm" data-action="send-test">Send test emails</button>')}
-          ${row('4. Pre-Send Check', 'Who will be sent, who cannot be sent yet, and why.', '<a class="btn btn-secondary btn-sm" href="#send">Open Send Center</a>')}
-          ${row('5. Send Ready Employees', DATA.testMode ? 'Test Mode is ON: these go to the test inbox too.' : 'LIVE: emails real employees. You type a confirmation first.', '<button type="button" class="btn btn-secondary btn-sm" data-action="send-live">Send to employees</button>')}
+          ${row('1. Get Hours from Jibble', 'Brings in Jibble’s latest hours (keeping what you typed), makes Wages a formula, then shows who needs fixing. Each step asks first. A new month: Start a month.',
+            `<button type="button" class="btn btn-secondary btn-sm" data-action="jibble-all"${tl.jibbleBusy ? ' disabled' : ''}>${tl.jibbleBusy ? '<span class="spinner sm"></span>Checking Jibble…' : 'Get hours'}</button>`)}
+          ${row('2. Prepare Payout', 'Makes the Payment Calculations and updates Payout Control. Never sends an email.', '<button type="button" class="btn btn-secondary btn-sm" data-action="prepare">Prepare payouts</button>')}
+          ${row('3. Review Payouts', 'Check each person and tick Manager Verified.', '<a class="btn btn-secondary btn-sm" href="#payroll">Open Payroll Management</a>')}
+          ${row('4. Test Payout Email', 'Sends to the test inbox only.', '<button type="button" class="btn btn-secondary btn-sm" data-action="send-test">Send test emails</button>')}
+          ${row('5. Pre-Send Check', 'Who will be sent, who cannot be sent yet, and why.', '<a class="btn btn-secondary btn-sm" href="#send">Open Send Center</a>')}
+          ${row('6. Send Ready Employees', DATA.testMode ? 'Test Mode is ON: these go to the test inbox too.' : 'LIVE: emails real employees. You type a confirmation first.', '<button type="button" class="btn btn-secondary btn-sm" data-action="send-live">Send to employees</button>')}
           ${row('Setup &amp; Repair: month folders', f.slip && f.calc ? 'This month’s Payment Slip and Payment Calculation folders exist.' : 'A folder for ' + esc(f.name || DATA.period) + ' is missing.',
             f.slip && f.calc ? '<span class="badge b-sent">Done</span>' : '<button type="button" class="btn btn-secondary btn-sm" data-action="create-folders">Create the folders</button>')}
           ${row('Setup &amp; Repair: fill blank Employee IDs', 'Only where the Staff Directory has exactly one person with that name. Shown first; nothing changes until you approve.',
@@ -2092,7 +2098,7 @@
         </ul>
       </section>
       <section class="card" aria-labelledby="jm-title">
-        <div class="card-head"><div><h2 id="jm-title">Jibble</h2><span class="small muted">Fill in a month from Jibble, update it, or make Wages a formula</span></div><div class="tags"><a class="btn btn-secondary btn-sm" href="#checks">Start a month</a><button type="button" class="btn btn-secondary btn-sm" data-action="tool-wages">Make Wages a formula</button></div></div>
+        <div class="card-head"><div><h2 id="jm-title">Jibble: one step at a time</h2><span class="small muted">The steps of 1. Get Hours from Jibble, one by one: start a month, update it from Jibble (on Jibble &amp; Documents), make Wages a formula</span></div><div class="tags"><a class="btn btn-secondary btn-sm" href="#checks">Start or update a month</a><button type="button" class="btn btn-secondary btn-sm" data-action="tool-wages">Make Wages a formula</button></div></div>
       </section>
       <section class="card" aria-labelledby="dm-title">
         <div class="card-head"><div><h2 id="dm-title">Delete a month tab</h2><span class="small muted">For testing: delete a month the Jibble menu made, then make it again with Start a month.</span></div></div>
@@ -2102,6 +2108,27 @@
         </div>
         <p class="small muted" style="margin:0;padding:0 24px 20px;line-height:1.5">Refused for a tab made by hand, a tab with anyone marked Paid, or a month with any payout Sent or Review Required. Payout Control rows are kept. Undo: File → Version history in the spreadsheet.</p>
       </section>`;
+  }
+  /**
+   * 1. Get Hours from Jibble: the menu's one button, on the website (owner, 2026-11-03). The same steps in the
+   * same order, each asking first: update from Jibble if anything changed, Wages as a formula, then Needs fixing.
+   */
+  async function jibbleAll() {
+    const tl = state.tools;
+    tl.jibbleBusy = true; render();
+    try {
+      if (DATA.monthTab && DATA.monthTab.fromJibble) {
+        await refillPlan();
+        const p = state.refill.plan;
+        if (state.refill.error) toast('Jibble’s hours were not brought in: ' + state.refill.error, 'error');
+        else if (p && p.blockers.length) toast('Jibble’s hours were not brought in: ' + p.blockers.join(' '), 'error');
+        else if (p && (p.removed.length || p.people.some((x) => x.isNew || x.oldHours !== x.newHours))) await refillGo();
+      }
+      await wageFormulas();
+    } finally { tl.jibbleBusy = false; }
+    state.scrollToFix = true;
+    location.hash = '#payroll';
+    render();
   }
   /** Wages as a formula in this month's tab: shows who, changes no amount, asks first. */
   async function wageFormulas() {
@@ -2234,7 +2261,7 @@
   function openPrepare() {
     const s = DATA.summary.all;
     document.getElementById('prepare-body').innerHTML = `
-      <p style="margin:0;line-height:1.5">This runs the existing <strong>Prepare Payout</strong> for <strong>${esc(DATA.period)}</strong>, the same as <em>Machino Payout → 1. Prepare Payout</em> in the spreadsheet.</p>
+      <p style="margin:0;line-height:1.5">This runs the existing <strong>Prepare Payout</strong> for <strong>${esc(DATA.period)}</strong>, the same as <em>Machino Payout → 2. Prepare Payout</em> in the spreadsheet.</p>
       <ul class="ol-steps" style="list-style:disc">
         <li>Re-checks each person and updates Payout Control.</li>
         <li>Makes or refreshes the Payment Calculation PDFs.</li>
@@ -2417,6 +2444,7 @@
     if (a === 'tool-ids-apply') applyIdFills();
     if (a === 'tool-delete-month') deleteMonthTab();
     if (a === 'tool-wages') wageFormulas();
+    if (a === 'jibble-all') jibbleAll();
     if (a === 'start-review') {
       const first = canVerify(payrollRows()).find((x) => !x.verified);
       if (first) openDrawer(first.id);
@@ -2565,12 +2593,12 @@
 
   /* ---------- LIVE confirmation preview (never sends anything) ---------- */
   const dlg = document.getElementById('live-dialog');
-  /* ---------- Sending: 3. Test Payout Email and 5. Send Ready Employees (owner, 2026-10-27) ---------- */
+  /* ---------- Sending: 4. Test Payout Email and 6. Send Ready Employees (owner, 2026-10-27) ---------- */
   const confirmInput = document.getElementById('live-confirm');
   const sendBtn = document.getElementById('live-send');
   const branchArg = () => ({ both: '', ss18: 'SS18', ioi: 'IOI' })[state.branch] || '';
   let pendingSend = null;
-  /** test: true = 3. Test Payout Email; false = 5. Send Ready Employees. */
+  /** test: true = 4. Test Payout Email; false = 6. Send Ready Employees. */
   async function sendFlow(test) {
     let rep;
     try { rep = await call('sendPreview', { test, branch: branchArg() }); } catch (err) { toast('Could not check: ' + errText(err), 'error'); return; }
