@@ -309,7 +309,7 @@ window.DashboardPreview = (function () {
           { label: 'Review Payouts', note: 'Fix problems and tick Manager Verified in Payroll Management.', state: period === 'October 2026' ? 'current' : 'done' },
           { label: 'Test Payout Email', note: 'Goes to the test inbox only.', state: 'done' },
           { label: 'Pre-Send Check', note: 'The list below.', state: period === 'October 2026' ? 'todo' : 'done' },
-          { label: 'Send Ready Employees', note: 'LIVE. In the spreadsheet for now.', state: period === 'October 2026' ? 'todo' : 'done' },
+          { label: 'Send to Employees', note: 'LIVE. In the spreadsheet for now.', state: period === 'October 2026' ? 'todo' : 'done' },
           { label: 'Results', note: 'See History.', state: period === 'October 2026' ? 'todo' : 'done' }
         ],
         jibble: {
@@ -609,7 +609,7 @@ window.DashboardPreview = (function () {
     },
 
     refillMonth(args) {
-      if (args.confirm !== 'UPDATE') fail('Type UPDATE to confirm.');
+      if (args.confirm !== true && args.confirm !== 'UPDATE') fail('Confirm the update first.');
       const m = month(args.period);
       if (m.employees.some((e) => e.payment === 'Paid')) fail('"' + args.period + '" already has people marked Paid, so it was not filled in again. Nothing was changed.');
       const first = m.employees[0];
@@ -701,6 +701,18 @@ window.DashboardPreview = (function () {
         renamed.push({ from: r.name, to: r.target });
       });
       return { renamed, skipped, message: 'Preview only: nothing in Drive was renamed.' };
+    },
+
+    /** The same rule as Payout Automation's dashboardRememberSlipName: the name must match nobody now, and the alias cell must be empty. */
+    rememberSlipName(args) {
+      const person = DIRECTORY.find((p) => p.id === args.employeeId);
+      if (!person) return { ok: false, message: 'That person is not in the Staff Directory. Nothing was saved.' };
+      const part = slipNamePart_(slipClean_(args.fileName).replace(/\.pdf$/i, ''), slipStores_(DIRECTORY));
+      if (!part) return { ok: false, message: 'No name could be read from the file name. Nothing was saved.' };
+      if (person.alias) return { ok: false, message: person.name + ' already has a Payment Slip Name Alias ("' + person.alias + '"). It was not changed.' };
+      if (slipFindPeople_(part, DIRECTORY).people.length) return { ok: false, message: '"' + part + '" already matches someone in the Staff Directory, so it is not remembered.' };
+      person.alias = part;
+      return { ok: true, alias: part, message: 'Remembered "' + part + '" as ' + person.name + '\'s slip name. (Preview only: nothing was saved.)' };
     },
 
     getDocumentUrl() { return null; },

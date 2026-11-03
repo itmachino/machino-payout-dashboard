@@ -204,6 +204,18 @@ h1, h2, h3 { font-family: var(--font-display); font-weight: normal; margin: 0; }
 .hero-copy h2 { font-size: 26px; line-height: 1.25; }
 .hero-copy p { margin: 0; line-height: 1.55; color: var(--ink-soft); }
 .hero-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+/* This month: the 6 steps (owner, 2026-11-03). */
+.checklist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; background: var(--paper); }
+.chk { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto auto; gap: 8px 14px; align-items: center; padding: 14px 18px; border-top: 1px solid var(--line); }
+.chk:first-child { border-top: 0; }
+.chk-n { width: 30px; height: 30px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; background: var(--paper-warm); color: var(--ink-soft); border: 1px solid var(--line); }
+.chk-n svg { width: 16px; height: 16px; }
+.chk.done .chk-n { background: var(--sent-bg); color: var(--sent-ink); border-color: transparent; }
+.chk.warn .chk-n { background: var(--attention-bg); color: var(--attention-ink); border-color: transparent; }
+.chk.next { background: var(--brown-tint); }
+.chk.next .chk-n { background: var(--brown); color: #fff; border-color: transparent; }
+.chk-t { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+@media (max-width: 760px) { .chk { grid-template-columns: 30px minmax(0, 1fr); padding: 14px 12px; } .chk .badge, .chk .btn { grid-column: 2; justify-self: start; } }
 .progress { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(9, minmax(0, 1fr)); gap: 8px; }
 .progress li { display: flex; flex-direction: column; gap: 8px; font-size: 12px; color: var(--ink-soft); min-width: 0; }
 .progress .bar { height: 5px; border-radius: var(--radius-pill); background: var(--line); }
@@ -537,25 +549,19 @@ kbd { display: inline-block; min-width: 20px; padding: 0 5px; border: 1px solid 
       <nav class="nav" aria-label="Main">
         <a href="#overview" data-route="overview">
           <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
-          Overview</a>
+          This month</a>
         <a href="#payroll" data-route="payroll">
           <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
           Payroll Management<span class="nav-count" id="nav-count" hidden></span></a>
         <a href="#slips" data-route="slips">
           <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M12 18v-6M9 15l3-3 3 3"/></svg>
           Payment Slips<span class="nav-count" id="nav-slips" hidden></span></a>
-        <a href="#staff" data-route="staff">
-          <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2.5"/><path d="M5.5 16.5c.6-1.8 2-2.8 3.5-2.8s2.9 1 3.5 2.8"/><path d="M15 9h3M15 13h3"/></svg>
-          Staff Directory</a>
-        <a href="#control" data-route="control">
-          <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="m9 14 2 2 4-4"/></svg>
-          Payout Control</a>
         <a href="#send" data-route="send">
           <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4 20-7z"/></svg>
           Send Center</a>
-        <a href="#history" data-route="history">
-          <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
-          History</a>
+        <a href="#staff" data-route="staff" class="mobile-only">Staff Directory</a>
+        <a href="#control" data-route="control" class="mobile-only">Payout Control</a>
+        <a href="#history" data-route="history" class="mobile-only">History</a>
         <a href="#checks" data-route="checks" class="mobile-only">Jibble &amp; Documents</a>
         <a href="#tools" data-route="tools" class="mobile-only">Tools</a>
         <a href="#settings" data-route="settings" class="mobile-only">Settings</a>
@@ -563,6 +569,15 @@ kbd { display: inline-block; min-width: 20px; padding: 0 5px; border: 1px solid 
       <div class="side-bottom">
         <nav class="nav" aria-label="More">
           <span class="nav-label">More</span>
+          <a href="#staff" data-route="staff">
+            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2.5"/><path d="M5.5 16.5c.6-1.8 2-2.8 3.5-2.8s2.9 1 3.5 2.8"/><path d="M15 9h3M15 13h3"/></svg>
+            Staff Directory</a>
+          <a href="#control" data-route="control">
+            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="m9 14 2 2 4-4"/></svg>
+            Payout Control</a>
+          <a href="#history" data-route="history">
+            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+            History</a>
           <a href="#checks" data-route="checks">
             <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 15l2 2 4-4"/></svg>
             Jibble &amp; Documents</a>
@@ -628,7 +643,7 @@ kbd { display: inline-block; min-width: 20px; padding: 0 5px; border: 1px solid 
     <h2 id="test-title" style="font-size:22px">Turn Test Mode OFF?</h2>
     <ul class="ol-steps" style="list-style:disc">
       <li>The next send from the spreadsheet emails <strong>real employees</strong> their payout.</li>
-      <li>Nothing is sent now. Sending still needs the Authorized Sender and <em>6. Send Ready Employees</em>.</li>
+      <li>Nothing is sent now. Sending still needs the Authorized Sender and <em>6. Send to Employees</em>.</li>
       <li>Turn it back on any time; blank or unclear always means ON.</li>
     </ul>
     <label class="field" style="color:var(--ink);font-weight:bold;font-size:14px">Type LIVE to confirm
@@ -699,7 +714,7 @@ kbd { display: inline-block; min-width: 20px; padding: 0 5px; border: 1px solid 
   <div class="dialog-body" id="email-body"></div>
 </dialog>
 
-<!-- LIVE confirmation for 6. Send Ready Employees: the typed SEND <n> is checked again by the backend. -->
+<!-- LIVE confirmation for 6. Send to Employees: the typed SEND <n> is checked again by the backend. -->
 <dialog id="live-dialog" aria-labelledby="live-title">
   <div class="live-bar">
     <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
@@ -720,8 +735,8 @@ kbd { display: inline-block; min-width: 20px; padding: 0 5px; border: 1px solid 
   </div>
 </dialog>
 
-<script src="config.js?v=9ce0327"></script>
-<script src="slip-match.js?v=9ce0327"></script>
-<script src="app.js?v=9ce0327"></script>
+<script src="config.js?v=aabe765"></script>
+<script src="slip-match.js?v=aabe765"></script>
+<script src="app.js?v=aabe765"></script>
 </body>
 </html>

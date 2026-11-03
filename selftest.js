@@ -32,7 +32,7 @@
 
   try {
     // 1. Overview
-    check('overview loads', await until(() => P.data && $('#view h1') && $('#view h1').textContent === 'Overview'));
+    check('overview loads', await until(() => P.data && $('#view h1') && $('#view h1').textContent === 'This month'));
     check('TEST MODE badge from the backend', $('.mode-pill') && $('.mode-pill').textContent === 'TEST MODE');
     check('no LIVE strip in Test Mode', !$('.live-strip'));
     check('5 missing slips on the overview', P.data.summary.all.missingSlips === 5, P.data.summary.all.missingSlips);
@@ -302,12 +302,19 @@
       /Ready to send\?/.test($('#view').textContent) && !!$('#view a[href="#send"]'));
     $('#pc-status').value = 'Sent'; $('#pc-status').dispatchEvent(new Event('change', { bubbles: true }));
     check('filtered by status', await until(() => $$('#view table.log tbody tr').length === 2), $$('#view table.log tbody tr').length);
-    check('Overview offers the next step as one button', await go('#overview', 'Overview') && /Next step:/.test(($('#next-step-go') || {}).textContent || ''));
-    // The month's steps are readable (a loading-bar style once squashed them to a thin line).
-    check('the month\'s steps show their names and open their pages', $$('ol.progress li').length === 9 &&
-      $('ol.progress').getBoundingClientRect().height > 20 && !!$('ol.progress a[href="#slips"]'), $('ol.progress') && $('ol.progress').getBoundingClientRect().height);
+    check('This month offers the next step as one button', await go('#overview', 'This month') && /Next step:/.test(($('#next-step-go') || {}).textContent || ''));
+    // This month is a checklist of the same 6 steps as the spreadsheet menu (owner, 2026-11-03). It must stay readable
+    // (a loading-bar style once squashed the old step list to a thin line).
+    const titles = $$('ol.checklist li .chk-t strong').map((x) => x.textContent);
+    check('This month lists the 6 steps in the menu\'s order, each with one button', titles.join('|') === 'Get Hours from Jibble|Rename Payment Slips|Prepare Payout|Review Payouts|Test Payout Email|Send to Employees' &&
+      $$('ol.checklist li').every((li) => li.querySelectorAll('a.btn, button.btn').length === 1) && $('ol.checklist').getBoundingClientRect().height > 200, titles.join('|'));
+    check('exactly one step is the next one, and it is the first that is not done', $$('ol.checklist li.next').length === 1 &&
+      $$('ol.checklist li').findIndex((li) => !li.classList.contains('done')) === $$('ol.checklist li').findIndex((li) => li.classList.contains('next')));
+    check('the missing slips show on step 2 (the count the page has), with a button to Payment Slips', P.data.summary.all.missingSlips > 0 && $$('ol.checklist li')[1].textContent.includes(P.data.summary.all.missingSlips + ' missing') && !!$$('ol.checklist li')[1].querySelector('a[href="#slips"]'), $$('ol.checklist li')[1].textContent.replace(/\s+/g, ' ') + ' | missing=' + P.data.summary.all.missingSlips);
+    check('the page has no separate Staff, Payout Control or History in the main menu: they are under More', !$('nav[aria-label="Main"] a[data-route="staff"]:not(.mobile-only)') &&
+      !!$('nav[aria-label="More"] a[data-route="staff"]') && !!$('nav[aria-label="More"] a[data-route="control"]') && !!$('nav[aria-label="More"] a[data-route="history"]'));
     // 8c3. Needs fixing (owner, 2026-11-03): who has no pay yet, why, and a fix for each
-    check('Overview says how many people need fixing', await go('#overview', 'Overview') && /people need fixing/.test($('#view').textContent));
+    check('This month says how many people need fixing', await go('#overview', 'This month') && /people need fixing/.test($('#view').textContent));
     $('[data-goto-fix]').click();
     check('it leads to the Needs fixing list on Payroll Management', await until(() => !!$('#needs-fixing') && $('#view h1').textContent === 'Payroll Management'));
     const fxNames = () => $$('.fx-row .fx-who strong').map((x) => x.textContent);
@@ -410,7 +417,9 @@
     check('picking the person offers it for renaming too', await until(() => $$('[data-drive-choose]').length === 2));
     $('[data-action="drive-rename"]').click();
     check('renaming asks first, showing old → new', await until(() => $('#confirm-dialog').open && /→/.test($('#confirm-body').textContent)));
+    check('a person you picked can be remembered for next month (ticked), and the page says only an unmatched name is kept', !!$('#remember-names') && $('#remember-names').checked && /nobody else matches/.test($('#confirm-body').textContent));
     $('#confirm-go').click();
+    check('the message says the name was remembered', await until(() => !!P.state.toast && /remembered for next month/.test(P.state.toast.text)), P.state.toast && P.state.toast.text);
     check('renamed: the files now have the standard names', await until(() => $$('[data-drive-choose]').length === 0 && /IOI Arjun al Pillai - Retail Wages and Commission for October 2026 Payment Slip\.pdf/.test($('#view').textContent)));
 
     // 8e. Start a month
@@ -432,8 +441,7 @@
     check('"Check what would change" lists everyone, hours before and after, and changes nothing', await until(() => !!P.state.refill.plan && P.state.refill.plan.people.length >= 11) &&
       P.state.refill.plan.blockers.length === 0 && !$('[data-action="refill-go"]').disabled && /Hours from Jibble/.test($('#view').textContent));
     $('[data-action="refill-go"]').click();
-    check('updating asks for the word UPDATE', await until(() => $('#confirm-dialog').open && /Type UPDATE/.test($('#confirm-body').textContent)));
-    input($('#confirm-word'), 'UPDATE');
+    check('updating asks once (no word to type)', await until(() => $('#confirm-dialog').open && /Update November 2026 from Jibble/.test($('#confirm-title').textContent) && !$('#confirm-word')));
     $('#confirm-go').click();
     check('updated: the month reloads, the preview resets and the message says what to do', await until(() => P.state.refill.plan === null && !P.state.loading && !!P.state.toast && /Updated from Jibble/.test(P.state.toast.text), 6000));
     await P.load('October 2026', { full: true });
@@ -444,8 +452,8 @@
 
     // 8f. Tools: the spreadsheet's menus
     check('Tools opens', await go('#tools', 'Tools'));
-    check('every menu item is listed', ['Check System', '1. Get Hours from Jibble', '2. Prepare Payout', '3. Review Payouts', '4. Test Payout Email', '5. Pre-Send Check',
-      '6. Send Ready Employees', 'Setup & Repair', 'Delete a month tab'].every((x) => $('#view').textContent.includes(x)));
+    check('every menu item is listed', ['Check System', '1. Get Hours from Jibble', '2. Rename Payment Slips', '3. Prepare Payout', '4. Review Payouts', '5. Test Payout Email', 'Pre-Send Check',
+      '6. Send to Employees', 'Setup & Repair', 'Delete a month tab'].every((x) => $('#view').textContent.includes(x)));
     $('[data-action="tool-wages"]').click();
     check('Make Wages a formula asks first and says no amount changes', await until(() => $('#confirm-dialog').open && /Make Wages a formula/.test($('#confirm-title').textContent) &&
       /No amounts change/.test($('#confirm-body').textContent)), $('#confirm-body') && $('#confirm-body').textContent);
@@ -483,7 +491,7 @@
     $('#confirm-go').click();
     check('a Jibble-made month with nobody Paid is deleted', await until(() => !P.data.periods.includes('November 2026') && !P.state.loading, 6000));
 
-    // 9. Send Center: 4. Test Payout Email and 6. Send Ready Employees (owner, 2026-10-27)
+    // 9. Send Center: 5. Test Payout Email and 6. Send to Employees (owner, 2026-10-27)
     window.DashboardPreview.saveConfiguration({ changes: { 'Current Payout Month': 'October', 'Current Payout Year': '2026' } });
     await P.load('October 2026', { full: true });
     check('send center opens', await go('#send', 'Send Center'));

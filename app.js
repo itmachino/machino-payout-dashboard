@@ -261,26 +261,64 @@
   const attentionList = () => DATA.employees.filter((e) => e.issue || e.status === 'Review Required')
     .sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status]);
 
-  /* ---------- Overview ---------- */
+  /* ---------- The month as a checklist: the same 6 steps as Machino Payout in the spreadsheet (owner, 2026-11-03) ---------- */
+  const CHK_BADGE = { done: 'b-sent', warn: 'b-attention', todo: 'b-neutral' };
+  /**
+   * Every state comes from data the page already has. A step whose state cannot be known shows "To do",
+   * never a guess. Each step has ONE button that opens (or starts) the right thing.
+   */
+  function monthChecklist() {
+    const all = DATA.summary.all;
+    const n = DATA.employees.length;
+    const fixes = (DATA.fixes || []).length;
+    const prepared = DATA.employees.some((e) => e.pdf !== 'Not made yet');
+    const allSent = n > 0 && all.sent === n;
+    const testDone = (DATA.activity || []).some((a) => /^TEST\b/i.test(a.text));
+    const plural = (k, one, many) => k + ' ' + (k === 1 ? one : many);
+    const link = (href, label, attrs) => ({ href, label, attrs: attrs || '' });
+    const action = (name, label) => ({ action: name, label });
+    const steps = [
+      { title: 'Get Hours from Jibble', ...(n === 0
+        ? { state: 'todo', badge: 'To do', note: 'Nobody is on this month yet. Bring in the hours from Jibble.', go: action('jibble-all', 'Get hours') }
+        : fixes ? { state: 'warn', badge: plural(fixes, 'needs', 'need') + ' fixing', note: 'Someone has no Total Payout yet, or cannot be sent.', go: link('#payroll', 'Fix them', 'data-goto-fix') }
+        : { state: 'done', badge: 'Done', note: 'Everyone has a Total Payout.', go: action('jibble-all', 'Update from Jibble') }) },
+      { title: 'Rename Payment Slips', ...(n === 0
+        ? { state: 'todo', badge: 'To do', note: 'Finance’s PDFs go in the month’s folder, then get the standard names.', go: link('#slips', 'Open Payment Slips') }
+        : all.missingSlips ? { state: 'warn', badge: all.missingSlips + ' missing', note: 'Put Finance’s PDFs in the month’s folder, then rename them. A slip with another file name counts as missing until it is renamed.', go: link('#slips', 'Open Payment Slips') }
+        : { state: 'done', badge: 'Done', note: 'Every person has a slip.', go: link('#slips', 'Open Payment Slips') }) },
+      { title: 'Prepare Payout', ...(prepared
+        ? { state: 'done', badge: 'Done', note: 'Prepared. Run it again after any change.', go: action('prepare', 'Prepare again') }
+        : { state: 'todo', badge: 'To do', note: 'Makes each Payment Calculation and fills in Payout Control. It never sends an email.', go: action('prepare', 'Prepare payouts') }) },
+      { title: 'Review Payouts', ...(!prepared
+        ? { state: 'todo', badge: 'To do', note: 'Prepare first.', go: link('#payroll', 'Open Payroll Management') }
+        : all.attention ? { state: 'warn', badge: all.attention + ' need attention', note: 'Open each one to fix the problem.', go: link('#payroll', 'Fix the problems', 'data-goto-status="look"') }
+        : all.waiting ? { state: 'todo', badge: all.waiting + ' to verify', note: 'Tick Manager Verified for each person you have checked.', go: link('#payroll', 'Verify payouts', 'data-goto-status="waiting"') }
+        : { state: 'done', badge: 'Done', note: 'Everyone is verified.', go: link('#payroll', 'Open Payroll Management') }) },
+      { title: 'Test Payout Email', ...(testDone || allSent
+        ? { state: 'done', badge: 'Done', note: testDone ? 'A test email was sent.' : 'Not needed: everyone was sent.', go: link('#send', 'Open Send Center') }
+        : { state: 'todo', badge: 'To do', note: 'Recommended first: it goes to the test inbox only.', go: link('#send', 'Send a test email') }) },
+      { title: 'Send to Employees', ...(allSent
+        ? { state: 'done', badge: 'Done', note: 'All ' + n + ' sent. See History for the results.', go: link('#history', 'Open History') }
+        : { state: 'todo', badge: all.ready ? all.ready + ' ready' : 'Not ready', note: (all.sent ? all.sent + ' already sent. ' : '') + 'It shows who will be emailed first, and you confirm.', go: link('#send', 'Send to employees') }) }
+    ];
+    return { steps, next: steps.findIndex((s) => s.state !== 'done') };
+  }
+  const chkButton = (go, cls, id) => go.action
+    ? '<button type="button" class="btn ' + cls + '"' + (id ? ' id="' + id + '"' : '') + ' data-action="' + go.action + '">' + esc(go.label) + '</button>'
+    : '<a class="btn ' + cls + '"' + (id ? ' id="' + id + '"' : '') + ' href="' + go.href + '" ' + go.attrs + '>' + esc(go.label) + '</a>';
+
+  /* ---------- This month (the Overview) ---------- */
   function overview() {
     const s = DATA.summary[state.store];
     const att = attentionList().filter((p) => inStore(p.stores, state.store));
-    // Each step of the month opens the page where it is done (owner, 2026-11-03: "click something that goes there").
-    const STEP_GO = [['#checks', 'Start the month from Jibble'], ['#staff', 'Add missing Hourly Rates'], ['#slips', 'Upload the payment slips'],
-      ['#control', 'Prepare the payouts'], ['#payroll', 'Check and verify each person'], ['#send', 'Send a test email'],
-      ['#control', 'See who is ready to send'], ['#send', 'Send to employees'], ['#history', 'See the results']];
-    const steps = DATA.monthSteps.map((label, i) => {
-      const cls = i < DATA.currentStep ? 'done' : i === DATA.currentStep ? 'current' : '';
-      const go = STEP_GO[i] || ['#overview', label];
-      return `<li class="${cls}"${i === DATA.currentStep ? ' aria-current="step"' : ''}><span class="bar"></span><a class="step-l" href="${go[0]}" title="${esc(go[1])}" style="color:inherit;text-decoration:none">${i < DATA.currentStep ? icon.check + '<span class="sr-only">done:</span>' : ''}${esc(label)}${i === DATA.currentStep ? ' · now' : ''}</a></li>`;
-    }).join('');
-    const nextGo = STEP_GO[Math.min(DATA.currentStep, STEP_GO.length - 1)];
+    const chk = monthChecklist();
+    const nextStep = chk.next >= 0 ? chk.steps[chk.next] : null;
     const segTotal = s.sent + s.ready + s.na + s.rr + s.failed;
     const segs = [['Sent', s.sent, '#3E6B4F'], ['Ready', s.ready, '#2F5E73'], ['Needs Attention', s.na, '#C98A12'], ['Review Required', s.rr, '#8A3B12'], ['Failed', s.failed, '#9B2C2C']];
     const allDone = s.attention === 0 && s.waiting === 0;
     return `
       <header class="page-head">
-        <div class="title-block"><h1>Overview</h1><div class="tags small muted"><span>${esc(DATA.period)} · Last updated ${esc(DATA.updatedAt)}</span>${sampleTag()}</div></div>
+        <div class="title-block"><h1>This month</h1><div class="tags small muted"><span>${esc(DATA.period)} · Last updated ${esc(DATA.updatedAt)}</span>${sampleTag()}</div></div>
         <div class="tools">
           ${periodSelect('ov-month')}
           ${seg('store', [['all', 'Both stores'], ['ss18', 'SS18'], ['ioi', 'IOI']], state.store, 'Store')}
@@ -295,19 +333,20 @@
         <div class="hero-top">
           <div class="hero-copy">
             <span class="eyebrow">Your next step</span>
-            ${allDone
-              ? `<h2 id="next-step">Nothing to fix for ${esc(DATA.period)}</h2><p>Every payout is verified or sent. Check History for the results.</p>`
-              : `<h2 id="next-step">Fix ${s.attention} problem${s.attention === 1 ? '' : 's'}, then verify ${s.waiting} ${s.waiting === 1 ? 'person' : 'people'}</h2>
-                 <p>Open each person in Payroll Management to fix the problem. Then tick Manager Verified for everyone you have checked.</p>`}
+            ${nextStep
+              ? `<h2 id="next-step">Step ${chk.next + 1}: ${esc(nextStep.title)}</h2><p>${esc(nextStep.note)}</p>`
+              : `<h2 id="next-step">Everything is done for ${esc(DATA.period)}</h2><p>Every payout is sent. Check History for the results.</p>`}
           </div>
           <div class="hero-actions">
-            <a class="btn btn-primary" href="${nextGo[0]}" id="next-step-go">Next step: ${esc(nextGo[1])} ${icon.arrow}</a>
-            ${allDone ? `<a class="btn btn-secondary" href="#history">Open History</a>` : `
-            <button type="button" class="btn btn-secondary" data-goto-status="look">Fix the problems</button>
-            <button type="button" class="btn btn-secondary" data-goto-status="waiting">Verify payouts</button>`}
+            ${nextStep ? chkButton(nextStep.go, 'btn-primary', 'next-step-go').replace('>' + esc(nextStep.go.label) + '<', '>Next step: ' + esc(nextStep.go.label) + ' ' + icon.arrow + '<') : '<a class="btn btn-primary" href="#history" id="next-step-go">Next step: Open History ' + icon.arrow + '</a>'}
           </div>
         </div>
-        <ol class="progress" aria-label="Monthly progress">${steps}</ol>
+        <ol class="checklist" aria-label="This month, step by step">${chk.steps.map((st, i) => `<li class="chk ${st.state}${i === chk.next ? ' next' : ''}"${i === chk.next ? ' aria-current="step"' : ''}>
+          <span class="chk-n" aria-hidden="true">${st.state === 'done' ? icon.check : i + 1}</span>
+          <div class="chk-t"><strong>${esc(st.title)}</strong><span class="small muted">${esc(st.note)}</span></div>
+          <span class="badge ${CHK_BADGE[st.state]}">${esc(st.badge)}</span>
+          ${chkButton(st.go, 'btn-secondary btn-sm')}
+        </li>`).join('')}</ol>
       </section>
 
       <section class="kpis" aria-label="Summary">
@@ -553,12 +592,10 @@
         <li>Hours come from Jibble again, for ${r.plan.people.length} people.</li>
         <li>Claims, incentives, commission and payment details you typed are kept.</li>
         <li>Notes are Jibble’s again, and anyone marked Paid stops this from running.</li>
-        ${r.plan.removed.length ? `<li><strong>Removed:</strong> ${r.plan.removed.map((x) => esc(x.name)).join(', ')}</li>` : ''}</ul>
-      <label class="field">Type UPDATE to confirm<input class="input" id="confirm-word" autocomplete="off"></label>`, 'Update', !!r.plan.removed.length);
+        ${r.plan.removed.length ? `<li><strong>Removed:</strong> ${r.plan.removed.map((x) => esc(x.name)).join(', ')}</li>` : ''}</ul>`, 'Update', !!r.plan.removed.length);
     if (!ok) return;
-    if (((document.getElementById('confirm-word') || {}).value || '').trim() !== 'UPDATE') { toast('Not updated: UPDATE was not typed.', 'error'); return; }
     try {
-      const res = await call('refillMonth', { period: DATA.period, confirm: 'UPDATE', expected: { removed: r.plan.removed.map((x) => x.name) } });
+      const res = await call('refillMonth', { period: DATA.period, confirm: true, expected: { removed: r.plan.removed.map((x) => x.name) } });
       r.plan = null;
       await load(DATA.period, { full: true, message: res.message.split('\n')[0] });
     } catch (err) {
@@ -955,13 +992,23 @@
   async function renameDriveSlips() {
     const d = state.slips.drive;
     const rows = d.rows.filter((r) => r.state === 'rename' && d.chosen[r.fileId] !== false);
+    const picked = rows.filter((r) => d.picks[r.fileId]);
     const ok = await confirmBox('Rename ' + rows.length + ' slip' + (rows.length === 1 ? '' : 's') + '?',
-      `<ul class="plain-list">${rows.map((r) => `<li style="padding:8px 0;display:flex;flex-direction:column;gap:2px"><span class="small muted">${esc(r.name)}</span><strong class="small">→ ${esc(r.target)}</strong></li>`).join('')}</ul>`,
+      `<ul class="plain-list">${rows.map((r) => `<li style="padding:8px 0;display:flex;flex-direction:column;gap:2px"><span class="small muted">${esc(r.name)}</span><strong class="small">→ ${esc(r.target)}</strong></li>`).join('')}</ul>` +
+      (picked.length ? `<label class="check"><input type="checkbox" id="remember-names" checked><span>Remember the ${picked.length === 1 ? 'name' : picked.length + ' names'} you picked a person for, so next month ${picked.length === 1 ? 'it matches' : 'they match'} by itself. Only a name nobody else matches is remembered.</span></label>` : ''),
       'Rename');
     if (!ok) return;
+    const remember = picked.length > 0 && !!(document.getElementById('remember-names') || {}).checked;
     try {
       const res = await call('renameSlips', { period: DATA.period, fileIds: rows.map((r) => r.fileId), picks: d.picks });
-      toast(res.renamed.length + ' renamed.' + (res.skipped.length ? ' ' + res.skipped.length + ' not renamed: ' + res.skipped.map((s) => s.name + ' (' + s.reason + ')').join('; ') : ''), res.skipped.length ? 'error' : 'ok');
+      let remembered = 0;
+      if (remember) {
+        for (const r of picked) {
+          if (!res.renamed.some((x) => x.from === r.name)) continue;
+          try { const out = await call('rememberSlipName', { employeeId: r.employeeId, fileName: r.name }); if (out && out.ok) remembered++; } catch (err) { /* the rename is done; a name that is not remembered is asked again next month */ }
+        }
+      }
+      toast(res.renamed.length + ' renamed.' + (remembered ? ' ' + remembered + ' name' + (remembered === 1 ? '' : 's') + ' remembered for next month.' : '') + (res.skipped.length ? ' ' + res.skipped.length + ' not renamed: ' + res.skipped.map((s) => s.name + ' (' + s.reason + ')').join('; ') : ''), res.skipped.length ? 'error' : 'ok');
       await loadDriveSlips();
       load(DATA.period);
     } catch (err) { toast('Not renamed: ' + errText(err), 'error'); }
@@ -1224,7 +1271,7 @@
         <div class="card-body" style="padding-top:0">
           <ul class="ol-steps" style="list-style:disc">
             <li>This switch changes <strong>Test Mode</strong> in Configuration. The badge shows what Configuration holds, read back after every change.</li>
-            <li>Turning it off sends nothing. LIVE emails still need the Authorized Sender, the Pre-Send Check and <em>6. Send Ready Employees</em> in the spreadsheet.</li>
+            <li>Turning it off sends nothing. LIVE emails still need the Authorized Sender, the Pre-Send Check and <em>6. Send to Employees</em> in the spreadsheet.</li>
             <li>If Configuration is blank or unclear, Test Mode counts as ON.</li>
           </ul>
         </div>
@@ -1386,12 +1433,12 @@
       </section>
       <div class="split" style="align-items:stretch">
         <section class="card card-body main-col" aria-labelledby="tt" style="display:flex;flex-direction:column;gap:12px">
-          <h2 id="tt" style="font-size:20px">4. Test Payout Email</h2>
+          <h2 id="tt" style="font-size:20px">5. Test Payout Email</h2>
           <p class="muted" style="margin:0;line-height:1.5">Sends each email to the Test Email in Configuration only, with both attachments. No employee receives anything, and nothing is marked Sent.</p>
           <button type="button" class="btn btn-secondary" data-action="send-test" style="align-self:flex-start">${icon.mail}Send test emails</button>
         </section>
         <section class="card card-body side-col" aria-labelledby="lt" style="display:flex;flex-direction:column;gap:12px">
-          <h2 id="lt" style="font-size:20px">6. Send Ready Employees</h2>
+          <h2 id="lt" style="font-size:20px">6. Send to Employees</h2>
           <p class="muted" style="margin:0;line-height:1.5">${DATA.testMode ? 'Test Mode is ON, so these also go to the test inbox only.' : '<strong>LIVE:</strong> real emails to real employees, from the Authorized Sender. You type a confirmation first.'}</p>
           <button type="button" class="btn ${DATA.testMode ? 'btn-secondary' : 'btn-live'}" data-action="send-live" style="align-self:flex-start">${icon.send || icon.mail}Send to employees</button>
         </section>
@@ -2074,18 +2121,20 @@
       <section class="card raised" aria-labelledby="mp-title">
         <div class="card-head"><div><h2 id="mp-title">Machino Payout</h2><span class="small muted">For ${esc(DATA.period)}</span></div></div>
         <ul class="plain-list" style="padding:0 24px">
+          ${row('1. Get Hours from Jibble', 'Brings in Jibble’s latest hours (keeping what you typed), makes Wages a formula, then shows who needs fixing. Each step asks first. A new month: Start a month.',
+            `<button type="button" class="btn btn-secondary btn-sm" data-action="jibble-all"${tl.jibbleBusy ? ' disabled' : ''}>${tl.jibbleBusy ? '<span class="spinner sm"></span>Checking Jibble…' : 'Get hours'}</button>`)}
+          ${row('2. Rename Payment Slips', 'Finance’s PDFs get the standard names. You see the list first and agree before anything is renamed.', '<a class="btn btn-secondary btn-sm" href="#slips">Open Payment Slips</a>')}
+          ${row('3. Prepare Payout', 'Makes the Payment Calculations and updates Payout Control. Never sends an email.', '<button type="button" class="btn btn-secondary btn-sm" data-action="prepare">Prepare payouts</button>')}
+          ${row('4. Review Payouts', 'Check each person and tick Manager Verified.', '<a class="btn btn-secondary btn-sm" href="#payroll">Open Payroll Management</a>')}
+          ${row('5. Test Payout Email', 'Sends to the test inbox only.', '<button type="button" class="btn btn-secondary btn-sm" data-action="send-test">Send test emails</button>')}
+          ${row('6. Send to Employees', DATA.testMode ? 'Test Mode is ON: these go to the test inbox too.' : 'LIVE: emails real employees. You type a confirmation first.', '<button type="button" class="btn btn-secondary btn-sm" data-action="send-live">Send to employees</button>')}
+          <li style="padding:16px 0 0"><h3 class="label">More</h3></li>
+          ${row('Pre-Send Check', 'Who will be sent, who cannot be sent yet, and why.', '<a class="btn btn-secondary btn-sm" href="#send">Open Send Center</a>')}
           ${row('Check System', 'A read-only check of everything the payout needs. Changes nothing.', `<button type="button" class="btn btn-secondary btn-sm" data-action="tool-check"${tl.checking ? ' disabled' : ''}>${tl.checking ? '<span class="spinner sm"></span>Checking…' : 'Run Check System'}</button>`)}
           ${tl.check ? `<li style="padding:0 0 16px"><div class="card" style="padding:16px;display:flex;flex-direction:column;gap:10px">
               <strong>${tl.check.canPrepare ? 'Ready to prepare ' : 'Not ready to prepare '}${esc(tl.check.period)}</strong>
               ${tl.check.findings.length ? `<ul class="plain-list">${tl.check.findings.map((x) => `<li style="display:flex;gap:10px;align-items:flex-start;padding:8px 0"><span class="badge ${(LEVEL_VIEW[x.level] || LEVEL_VIEW.warn)[0]}">${(LEVEL_VIEW[x.level] || LEVEL_VIEW.warn)[1]}</span><div><strong class="small">${esc(x.title)}</strong>${x.detail ? `<div class="small muted">${esc(x.detail)}</div>` : ''}</div></li>`).join('')}</ul>` : '<span class="small muted">No problems found.</span>'}
               <span class="small muted">${esc(tl.check.note)}</span></div></li>` : ''}
-          ${row('1. Get Hours from Jibble', 'Brings in Jibble’s latest hours (keeping what you typed), makes Wages a formula, then shows who needs fixing. Each step asks first. A new month: Start a month.',
-            `<button type="button" class="btn btn-secondary btn-sm" data-action="jibble-all"${tl.jibbleBusy ? ' disabled' : ''}>${tl.jibbleBusy ? '<span class="spinner sm"></span>Checking Jibble…' : 'Get hours'}</button>`)}
-          ${row('2. Prepare Payout', 'Makes the Payment Calculations and updates Payout Control. Never sends an email.', '<button type="button" class="btn btn-secondary btn-sm" data-action="prepare">Prepare payouts</button>')}
-          ${row('3. Review Payouts', 'Check each person and tick Manager Verified.', '<a class="btn btn-secondary btn-sm" href="#payroll">Open Payroll Management</a>')}
-          ${row('4. Test Payout Email', 'Sends to the test inbox only.', '<button type="button" class="btn btn-secondary btn-sm" data-action="send-test">Send test emails</button>')}
-          ${row('5. Pre-Send Check', 'Who will be sent, who cannot be sent yet, and why.', '<a class="btn btn-secondary btn-sm" href="#send">Open Send Center</a>')}
-          ${row('6. Send Ready Employees', DATA.testMode ? 'Test Mode is ON: these go to the test inbox too.' : 'LIVE: emails real employees. You type a confirmation first.', '<button type="button" class="btn btn-secondary btn-sm" data-action="send-live">Send to employees</button>')}
           ${row('Setup &amp; Repair: month folders', f.slip && f.calc ? 'This month’s Payment Slip and Payment Calculation folders exist.' : 'A folder for ' + esc(f.name || DATA.period) + ' is missing.',
             f.slip && f.calc ? '<span class="badge b-sent">Done</span>' : '<button type="button" class="btn btn-secondary btn-sm" data-action="create-folders">Create the folders</button>')}
           ${row('Setup &amp; Repair: fill blank Employee IDs', 'Only where the Staff Directory has exactly one person with that name. Shown first; nothing changes until you approve.',
@@ -2098,7 +2147,7 @@
         </ul>
       </section>
       <section class="card" aria-labelledby="jm-title">
-        <div class="card-head"><div><h2 id="jm-title">Jibble: one step at a time</h2><span class="small muted">The steps of 1. Get Hours from Jibble, one by one: start a month, update it from Jibble (on Jibble &amp; Documents), make Wages a formula</span></div><div class="tags"><a class="btn btn-secondary btn-sm" href="#checks">Start or update a month</a><button type="button" class="btn btn-secondary btn-sm" data-action="tool-wages">Make Wages a formula</button></div></div>
+        <div class="card-head"><div><h2 id="jm-title">Jibble steps, one at a time</h2><span class="small muted">Machino Payout → More in the spreadsheet has these too. The steps of 1. Get Hours from Jibble, one by one: start a month, update it from Jibble (on Jibble &amp; Documents), make Wages a formula</span></div><div class="tags"><a class="btn btn-secondary btn-sm" href="#checks">Start or update a month</a><button type="button" class="btn btn-secondary btn-sm" data-action="tool-wages">Make Wages a formula</button></div></div>
       </section>
       <section class="card" aria-labelledby="dm-title">
         <div class="card-head"><div><h2 id="dm-title">Delete a month tab</h2><span class="small muted">For testing: delete a month the Jibble menu made, then make it again with Start a month.</span></div></div>
@@ -2182,7 +2231,7 @@
   }
 
   const ROUTES = { overview, payroll, slips, checks, settings, send, history, staff: staffPage, tools: toolsPage, control: controlPage };
-  const TITLES = { overview: 'Overview', payroll: 'Payroll Management', slips: 'Payment Slips', checks: 'Jibble & Documents', settings: 'Settings', send: 'Send Center', history: 'History', staff: 'Staff Directory', tools: 'Tools', control: 'Payout Control' };
+  const TITLES = { overview: 'This month', payroll: 'Payroll Management', slips: 'Payment Slips', checks: 'Jibble & Documents', settings: 'Settings', send: 'Send Center', history: 'History', staff: 'Staff Directory', tools: 'Tools', control: 'Payout Control' };
   const view = document.getElementById('view');
   function currentRoute() {
     const r = (location.hash || '#overview').slice(1);
@@ -2261,7 +2310,7 @@
   function openPrepare() {
     const s = DATA.summary.all;
     document.getElementById('prepare-body').innerHTML = `
-      <p style="margin:0;line-height:1.5">This runs the existing <strong>Prepare Payout</strong> for <strong>${esc(DATA.period)}</strong>, the same as <em>Machino Payout → 2. Prepare Payout</em> in the spreadsheet.</p>
+      <p style="margin:0;line-height:1.5">This runs the existing <strong>Prepare Payout</strong> for <strong>${esc(DATA.period)}</strong>, the same as <em>Machino Payout → 3. Prepare Payout</em> in the spreadsheet.</p>
       <ul class="ol-steps" style="list-style:disc">
         <li>Re-checks each person and updates Payout Control.</li>
         <li>Makes or refreshes the Payment Calculation PDFs.</li>
@@ -2593,12 +2642,12 @@
 
   /* ---------- LIVE confirmation preview (never sends anything) ---------- */
   const dlg = document.getElementById('live-dialog');
-  /* ---------- Sending: 4. Test Payout Email and 6. Send Ready Employees (owner, 2026-10-27) ---------- */
+  /* ---------- Sending: 5. Test Payout Email and 6. Send to Employees (owner, 2026-10-27) ---------- */
   const confirmInput = document.getElementById('live-confirm');
   const sendBtn = document.getElementById('live-send');
   const branchArg = () => ({ both: '', ss18: 'SS18', ioi: 'IOI' })[state.branch] || '';
   let pendingSend = null;
-  /** test: true = 4. Test Payout Email; false = 6. Send Ready Employees. */
+  /** test: true = 5. Test Payout Email; false = 6. Send to Employees. */
   async function sendFlow(test) {
     let rep;
     try { rep = await call('sendPreview', { test, branch: branchArg() }); } catch (err) { toast('Could not check: ' + errText(err), 'error'); return; }
