@@ -364,6 +364,18 @@
     $('[data-fx-email="MCH-009"]').click();
     check('an email is saved to the Staff Directory, and only the clock-out problem is left for them', await until(() => P.data.staff.find((s) => s.id === 'MCH-009').email === 'aiman.new@example.com' &&
       !!$('#needs-fixing') && !/No email address/.test($('#needs-fixing').textContent) && /without a clock-out/.test($('#needs-fixing').textContent)));
+    // A day with no clock-out: pay worked out from the hours there are, after asking.
+    check('someone with a missing clock-out and no wages is offered "Work out pay", with the days named', !!$('[data-fx-pay="MCH-009"]') && /two|2 days? without a clock-out/.test($('#needs-fixing').textContent));
+    $('[data-fx-pay="MCH-009"]').click();
+    check('it asks first: hours × rate = pay, and which days are NOT included', await until(() => $('#confirm-dialog').open && /Work out Muhammad/.test($('#confirm-title').textContent) &&
+      /RM1,425\.00/.test($('#confirm-body').textContent) && /Not included/.test($('#confirm-body').textContent) && /14 Oct/.test($("#confirm-body").textContent)), $('#confirm-body') && $('#confirm-body').textContent);
+    $('#confirm-dialog').close();
+    check('no: nothing changes', await until(() => !$('#confirm-dialog').open) && person('MCH-009').wages === null);
+    $('[data-fx-pay="MCH-009"]').click();
+    await until(() => $('#confirm-dialog').open);
+    $('#confirm-go').click();
+    check('yes: the pay is worked out (150 h × RM9.50), the message names the days left out, and they leave the list', await until(() => person('MCH-009').wages === 'RM 1,425.00' && !fxNames().includes('Muhammad Aiman Hakim bin Rosli') &&
+      !!P.state.toast && /NOT included/.test(P.state.toast.text)), person('MCH-009').wages);
     check('back to the Staff Directory', await go('#staff', 'Staff Directory'));
     $('[data-staff-edit="MCH-001"]').click();
     await until(() => $('#staff-dialog').open);

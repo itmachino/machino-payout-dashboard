@@ -428,7 +428,8 @@
         : p.directoryRate ? `<button type="button" class="btn btn-secondary btn-sm" data-fx-rate="${k}">Use RM ${esc(p.directoryRate)} from the Staff Directory</button>`
         : `<span class="fx-inline"><span class="money-in"><span>RM</span><label class="sr-only" for="fx-rate-${k}">Hourly Rate for ${esc(f.name)}</label><input class="input" id="fx-rate-${k}" inputmode="decimal" placeholder="10.50"></span><button type="button" class="btn btn-secondary btn-sm" data-fx-rate="${k}">Save rate</button></span>`;
     } else if (p.code === 'clockout') {
-      act = `<button type="button" class="link-btn" data-open="${k}">Open ${esc(f.name.split(' ')[0])} → Edit hours</button><span class="small muted">or add the clock-out in Jibble</span>`;
+      act = (p.canPay ? `<button type="button" class="btn btn-secondary btn-sm" data-fx-pay="${k}">Work out pay from the hours Jibble has</button>` : '') +
+        `<button type="button" class="link-btn" data-open="${k}">Open ${esc(f.name.split(' ')[0])} → Edit hours</button><span class="small muted">or add the clock-out in Jibble, then update the month from Jibble</span>`;
     } else if (p.code === 'email') {
       act = emailInline(f.key);
     } else if (p.code === 'inactive') {
@@ -461,6 +462,25 @@
       await load(DATA.period, { message: res.message });
     } catch (err) {
       toast('Not linked: ' + errText(err), 'error');
+    }
+  }
+  /** Pay from the hours Jibble has, without the day(s) that have no clock-out. Asks first, naming the days. */
+  async function fxPay(key) {
+    const f = fxFind(key), e = emp(key);
+    const p = f && f.problems.find((x) => x.code === 'clockout');
+    if (!p || !e) return;
+    const wages = wagesOf(p.hours, p.rate);
+    const days = (p.days || []).join(', ');
+    const ok = await confirmBox('Work out ' + e.name.split(' ')[0] + '’s pay without the missing day?', `
+      <p style="margin:0;line-height:1.6">Hours Jibble has: <strong>${esc(p.hours)}</strong> × Hourly Rate <strong>RM${esc(Number(p.rate).toFixed(2))}</strong> = <strong>${wages == null ? '—' : esc(rmText(wages))}</strong></p>
+      <div class="notice">${icon.alert}<span class="grow"><strong>Not included:</strong> ${p.days.length} day${p.days.length === 1 ? '' : 's'} with no clock-out (${esc(days)}). ${esc(e.name.split(' ')[0])} is not paid for ${p.days.length === 1 ? 'that day' : 'those days'} unless you add the clock-out in Jibble and then update the month from Jibble.</span></div>
+      <p class="small muted" style="margin:0;line-height:1.5">The pay goes into Wages and Total Payout. Run Prepare payouts again afterwards.</p>`, 'Yes, work out pay');
+    if (!ok) return;
+    try {
+      const res = await call('payKnownHours', { period: DATA.period, employeeId: e.id, expected: saw(e), confirm: true });
+      await load(DATA.period, { message: res.message });
+    } catch (err) {
+      toast('Pay not worked out: ' + errText(err), 'error');
     }
   }
   async function fxRate(key) {
@@ -2317,6 +2337,8 @@
     if (t.closest('[data-goto-fix]')) { state.scrollToFix = true; }
     const fxLinkBtn = t.closest('[data-fx-link]');
     if (fxLinkBtn) { const [k, id] = fxSplit(fxLinkBtn.dataset.fxLink); fxLink(k, id); return; }
+    const fxPayBtn = t.closest('[data-fx-pay]');
+    if (fxPayBtn) { fxPay(fxPayBtn.dataset.fxPay); return; }
     const fxRateBtn = t.closest('[data-fx-rate]');
     if (fxRateBtn) { fxRate(fxRateBtn.dataset.fxRate); return; }
     const fxEmailBtn = t.closest('[data-fx-email]');

@@ -131,7 +131,7 @@ window.DashboardPreview = (function () {
   function settle(e) {
     e.hoursEdit = e.lines.length === 1 ? { hours: String(e.lines[0][2]), rate: e.lines[0][3] == null ? '' : String(e.lines[0][3]), why: '' }
       : { hours: '', rate: '', why: 'Their hours or rate are written on more than one row in the sheet, so change them in the spreadsheet.' };
-    const wages = e.lines.every((l) => l[3] != null) ? e.lines.reduce((s, l) => s + l[2] * l[3], 0) : null;
+    const wages = e.lines.every((l) => l[3] != null) && !e.holdWages ? e.lines.reduce((s, l) => s + l[2] * l[3], 0) : null;
     e.wages = rm(wages);
     e.lines = e.lines.map((l) => l.slice(0, 4));
     e.lineView = e.lines.map((l) => [l[0], l[1], l[2].toFixed(2), rm(l[3]), l[3] == null ? null : rm(l[2] * l[3])]);
@@ -146,6 +146,7 @@ window.DashboardPreview = (function () {
     const employees = PEOPLE.map((p) => {
       const d = dir(p.id);
       const e = {
+        holdWages: p.id === 'MCH-009' && period === 'October 2026',   // a day with no clock-out leaves wages blank, as the Jibble fill does
         id: p.id, name: d.name, stores: p.stores.slice(), email: mask(d.email), jibble: [d.ss18, d.ioi].filter(Boolean).join(' · '),
         lines: p.lines.map((l) => [l[0], oct ? l[1] : l[1].replace('31 Oct', '30 Sep').replace(' Oct', ' Sep'), l[2], l[3]]),
         claims: p.claims.map((c) => ({ type: c[0], amount: rm(c[1]) })),
@@ -264,8 +265,11 @@ window.DashboardPreview = (function () {
         if (e.lines.some((l) => l[3] == null)) {
           problems.push({ code: 'rate', text: 'No Hourly Rate, so no wages or Total Payout yet.', directoryRate: d.rate === undefined ? '9.50' : d.rate, canFix: e.hoursEdit.why === '' });
         }
-        const open = e.attendance.filter((x) => x.flag === 'No clock-out').length;
-        if (open) problems.push({ code: 'clockout', text: open + ' day' + (open === 1 ? '' : 's') + ' without a clock-out, so no wages yet.' });
+        const openDays = e.attendance.filter((x) => x.flag === 'No clock-out');
+        if (openDays.length && e.total == null) {
+          problems.push({ code: 'clockout', text: openDays.length + ' day' + (openDays.length === 1 ? '' : 's') + ' without a clock-out, so no wages yet.', days: openDays.map((x) => x.label),
+            hours: String(e.lines[0][2]), rate: String(e.lines[0][3] == null ? '' : e.lines[0][3]), canPay: e.lines.length === 1 && e.lines[0][3] != null && e.lines[0][2] > 0 });
+        }
         if (!d.email) problems.push({ code: 'email', text: 'No email address, so their payout email cannot be sent.' });
       }
       if (problems.length) out.push({ key: e.id, name: e.name, stores: e.stores, hours: e.hours, employeeId: unlinked(e) ? null : e.id, problems });
@@ -556,6 +560,23 @@ window.DashboardPreview = (function () {
       e.jibble = [d.ss18, d.ioi].filter(Boolean).join(' · ');
       settle(e);
       return { employee: clone(e), message: was + ' is now linked to ' + d.name + ' (Employee ID ' + d.id + ').' + (rate == null ? ' They still have no Hourly Rate: add one in Needs fixing.' : ' Wages worked out from the Staff Directory rate.') + jibble + ' Run Prepare payouts so they can be checked and sent. (Preview only: the sheet was not changed.)' };
+    },
+
+    payKnownHours(args) {
+      if (!args.confirm) fail('Confirm which day is left out first.');
+      const m = month(args.period);
+      const e = m.employees.find((x) => x.id === args.employeeId);
+      if (!e) fail('This person is no longer on the month tab. Refresh and try again.');
+      if (changedSince(e, args.expected)) fail(e.name + ' changed in the spreadsheet since you opened them. Refresh, then try again. Nothing was saved.');
+      if (e.payment === 'Paid') fail(e.name + ' is marked Paid, so the payout amounts are locked. Set Payment Status back first. Nothing was changed.');
+      if (!e.attendance.some((x) => x.flag === 'No clock-out')) fail(e.name + ' has no day without a clock-out. Use Edit hours to change their pay. Nothing was changed.');
+      if (e.lines[0][3] == null) fail(e.name + ' has no Hourly Rate yet. Add it first (Needs fixing). Nothing was changed.');
+      const days = e.attendance.filter((x) => x.flag === 'No clock-out').map((x) => x.label);
+      e.holdWages = false;
+      settle(e);
+      let message = e.name + ': pay worked out from ' + Number(e.hours).toFixed(2) + ' hours × RM' + Number(e.lines[0][3]).toFixed(2) + ' = ' + e.wages.replace('RM ', 'RM') + '. The ' + (days.length === 1 ? 'day' : days.length + ' days') + ' with no clock-out (' + days.join(', ') + ') ' + (days.length === 1 ? 'is' : 'are') + ' NOT included.';
+      if (e.verified) { e.verified = false; message += ' Manager Verified was cleared because the payout changed.'; }
+      return { employee: clone(e), message: message + ' Run Prepare payouts again. (Preview only.)' };
     },
 
     fixRate(args) {
