@@ -4,7 +4,9 @@
 <meta name="robots" content="noindex">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Machino Retail Payout</title>
+<title>Machino Payout</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2064%2064'%3E%3Crect%20width%3D'64'%20height%3D'64'%20rx%3D'14'%20fill%3D'%237A4419'%2F%3E%3Ctext%20x%3D'32'%20y%3D'46'%20font-family%3D'Georgia%2Cserif'%20font-size%3D'42'%20font-style%3D'italic'%20font-weight%3D'bold'%20text-anchor%3D'middle'%20fill%3D'%23F8F1E7'%3EM%3C%2Ftext%3E%3C%2Fsvg%3E">
+<meta name="theme-color" content="#7A4419">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -314,7 +316,7 @@ table { width: 100%; border-collapse: collapse; font-size: 14px; }
 .days table { font-size: 13px; }
 .days th { position: sticky; top: 0; background: var(--paper-warm); text-align: left; padding: 8px 12px; font-size: 11px; color: var(--ink-soft); border-bottom: 1px solid var(--line-soft); font-weight: bold; }
 .days td { padding: 7px 12px; border-bottom: 1px solid var(--line-soft); }
-.days tr.flag td { background: #FFF9E3; }
+.days tr.flag td { background: var(--failed-bg); }   /* red, like the month tab (owner, 2026-11-03) */
 .days tr.manual td { background: #F6EEE3; }
 .days .hin { width: 92px; min-height: 34px; padding: 0 8px; font-size: 13px; text-align: right; }
 .form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
@@ -483,6 +485,21 @@ kbd { display: inline-block; min-width: 20px; padding: 0 5px; border: 1px solid 
 .day-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 120px) 40px; gap: 10px; align-items: center; }
 .req { color: var(--failed-ink); }
 .steps-guide { display: flex; flex-wrap: wrap; gap: 8px; }
+/* Needs fixing (owner, 2026-11-03): each person, why, and a button that fixes it */
+.fx-list { display: grid; }
+.fx-row { display: grid; grid-template-columns: minmax(180px, 240px) minmax(0, 1fr); gap: var(--space-4); padding: var(--space-4) var(--space-6); border-top: 1px solid var(--line-soft); }
+.fx-who { display: flex; flex-direction: column; gap: 6px; }
+.fx-what { display: grid; gap: var(--space-3); }
+.fx-problem { display: grid; gap: 8px; }
+.fx-text { font-weight: 600; font-size: 14px; }
+.fx-act { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.fx-cand { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; max-width: 580px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); }
+.fx-inline { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.fx-inline .input { min-width: 200px; }
+.fx-compare { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); gap: 12px; align-items: center; }
+.fx-compare > div { display: flex; flex-direction: column; gap: 4px; padding: 12px; border: 1px solid var(--line); border-radius: var(--radius); overflow-wrap: anywhere; }
+.fx-arrow { font-size: 22px; color: var(--brown); }
+@media (max-width: 760px) { .fx-row { grid-template-columns: 1fr; } .fx-compare { grid-template-columns: 1fr; } .fx-arrow { transform: rotate(90deg); justify-self: center; } }
 #confirm-dialog { width: min(600px, calc(100vw - 32px)); }
 .tool-row { display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: center; padding: 14px 0; border-bottom: 1px solid var(--line, #E5DED3); }
 .tool-row:last-child { border-bottom: 0; }
@@ -703,8 +720,8 @@ kbd { display: inline-block; min-width: 20px; padding: 0 5px; border: 1px solid 
   </div>
 </dialog>
 
-<script src="config.js?v=cc89bfa"></script>
-<script src="slip-match.js?v=cc89bfa"></script>
-<script src="app.js?v=cc89bfa"></script>
+<script src="config.js?v=a761a41"></script>
+<script src="slip-match.js?v=a761a41"></script>
+<script src="app.js?v=a761a41"></script>
 </body>
 </html>

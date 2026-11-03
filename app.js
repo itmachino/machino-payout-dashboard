@@ -149,12 +149,13 @@
     openId: null, editing: null, draft: null, saving: false, saveError: null,
     branch: 'both',
     history: { q: '', period: 'all', mode: 'all' },
-    staff: { q: '', show: 'active', editId: null },
+    staff: { q: '', show: 'active', editId: null, issue: 'all' },
     tools: { check: null, checking: false, ids: null, idsLoading: false, idChosen: {}, delMonth: null },
     slips: { files: [], plan: null, planning: false, saving: false, result: null, error: null },
     links: {},
     cfg: { editing: false, draft: null, saving: false },
     add: null,                                         // the Add person window
+    refill: { plan: null, loading: false, error: null },   // update a month from Jibble, keeping what was typed
     control: { period: null, rows: null, loading: false, error: null, status: 'all', store: 'all' },
     verify: null,
     menu: false,
@@ -231,6 +232,7 @@
       const d = opts.data || await call('getDashboardData', { period: period || null });
       DATA = d;
       state.control.rows = null;   // the Payout Control page reads its rows again after any change
+      state.refill.plan = null;    // so does the update-from-Jibble preview
       showMode();
       state.period = d.period;
       if (state.openId && !emp(state.openId)) closeDrawer(true, true);
@@ -287,6 +289,7 @@
         </div>
       </header>
       ${liveStrip()}${toastHTML()}
+      ${fixNotice()}
 
       <section class="card raised hero" aria-labelledby="next-step">
         <div class="hero-top">
@@ -376,6 +379,185 @@
     });
     const key = { name: (e) => e.name.toLowerCase(), hours: (e) => Number(e.hours), total: (e) => amt(e.total), status: (e) => STATUS_ORDER[e.status] }[p.sort];
     return rows.sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0) * p.dir);
+  }
+
+  /* ---------- Needs fixing: everyone with no pay yet or who cannot be sent, and a fix for each (owner, 2026-11-03) ---------- */
+  const HOW = { exact: 'Same name', words: 'Name fits', first: 'Same first name only: check carefully' };
+  const fixes = () => (DATA && DATA.fixes) || [];
+  const fxFind = (key) => fixes().find((f) => f.key === key);
+  const fxSplit = (v) => [v.slice(0, v.lastIndexOf('|')), v.slice(v.lastIndexOf('|') + 1)];
+
+  /** One line on the Overview: how many people need fixing, and where. */
+  function fixNotice() {
+    const n = fixes().length;
+    if (!n) return '';
+    return `<div class="notice" role="note">${icon.alert}<span class="grow"><span><strong>${n} ${n === 1 ? 'person needs' : 'people need'} fixing</strong> before everyone has a Total Payout and can be sent.</span></span><a class="btn btn-secondary btn-sm" href="#payroll" data-goto-fix>Fix them →</a></div>`;
+  }
+  function fixCard() {
+    const list = fixes();
+    if (!list.length) return '';
+    return `
+      <section class="card raised" aria-labelledby="fx-title" id="needs-fixing">
+        <div class="card-head"><div><h2 id="fx-title">Needs fixing</h2>
+          <span class="small muted">${list.length} ${list.length === 1 ? 'person has' : 'people have'} no pay yet, or cannot be sent. Fix each one here. Nothing is written until you press a button.</span></div></div>
+        <div class="fx-list">${list.map(fixRow).join('')}</div>
+      </section>`;
+  }
+  function fixRow(f) {
+    return `<div class="fx-row">
+      <div class="fx-who"><strong>${esc(f.name)}</strong><span class="tags">${storeBadges(f.stores)}<span class="small muted">${f.employeeId ? 'ID ' + esc(f.employeeId) : 'No Employee ID'} · ${esc(f.hours)} hours</span></span></div>
+      <div class="fx-what">${f.problems.map((p) => fixProblem(f, p)).join('')}</div>
+    </div>`;
+  }
+  function emailInline(id) {
+    return `<span class="fx-inline"><label class="sr-only" for="fx-email-${esc(id)}">Email</label><input class="input" type="email" id="fx-email-${esc(id)}" placeholder="name@example.com" autocomplete="off"><button type="button" class="btn btn-secondary btn-sm" data-fx-email="${esc(id)}">Save email</button></span>`;
+  }
+  function fixProblem(f, p) {
+    const k = esc(f.key);
+    let act = '';
+    if (p.code === 'link') {
+      act = (p.candidates.length
+        ? '<span class="small muted">Is this the same person?</span>' + p.candidates.map((c) => `
+          <div class="fx-cand"><span style="display:flex;flex-direction:column;gap:2px;min-width:0"><strong>${esc(c.name)}</strong><span class="small muted">ID ${esc(c.id)} · ${esc(c.store || 'no store')} · ${esc(HOW[c.how])}</span></span>
+            <button type="button" class="btn btn-secondary btn-sm" data-fx-link="${k}|${esc(c.id)}">Yes, same person</button></div>`).join('')
+        : '<span class="small muted">Nobody in the Staff Directory looks like them.</span>') +
+        (p.giveId ? `<div class="fx-cand"><span class="small">Their Staff Directory row has no Employee ID yet.</span><button type="button" class="btn btn-secondary btn-sm" data-staff-edit="row:${esc(p.giveId.row)}">Give ID</button></div>` : '') +
+        `<div class="fx-more"><button type="button" class="link-btn" data-fx-addnew="${k}">None of these: add ${esc(f.name)} as new staff</button></div>`;
+    } else if (p.code === 'rate') {
+      act = !p.canFix ? '<span class="small muted">Change it in the spreadsheet: their hours or rate are on more than one row.</span>'
+        : p.directoryRate ? `<button type="button" class="btn btn-secondary btn-sm" data-fx-rate="${k}">Use RM ${esc(p.directoryRate)} from the Staff Directory</button>`
+        : `<span class="fx-inline"><span class="money-in"><span>RM</span><label class="sr-only" for="fx-rate-${k}">Hourly Rate for ${esc(f.name)}</label><input class="input" id="fx-rate-${k}" inputmode="decimal" placeholder="10.50"></span><button type="button" class="btn btn-secondary btn-sm" data-fx-rate="${k}">Save rate</button></span>`;
+    } else if (p.code === 'clockout') {
+      act = `<button type="button" class="link-btn" data-open="${k}">Open ${esc(f.name.split(' ')[0])} → Edit hours</button><span class="small muted">or add the clock-out in Jibble</span>`;
+    } else if (p.code === 'email') {
+      act = emailInline(f.key);
+    } else if (p.code === 'inactive') {
+      act = '<a class="link-btn" href="#staff">Open the Staff Directory</a>';
+    } else {
+      act = `<button type="button" class="link-btn" data-open="${k}">Open</button>`;
+    }
+    return `<div class="fx-problem"><span class="fx-text">${esc(p.text)}</span><div class="fx-act">${act}</div></div>`;
+  }
+
+  /** "Is this the right person?" Nothing is written until the manager says yes. */
+  async function fxLink(key, employeeId) {
+    const f = fxFind(key), e = emp(key);
+    if (!f || !e) return;
+    const p = f.problems.find((x) => x.code === 'link');
+    const c = p && p.candidates.find((x) => x.id === employeeId);
+    if (!c) return;
+    const s = staffRow(employeeId) || {};
+    const ok = await confirmBox('Is this the right person?', `
+      <div class="fx-compare">
+        <div><span class="small muted">On the payroll tab (from Jibble)</span><strong>${esc(e.name)}</strong><span class="small muted">${esc(e.stores.join(' + '))} · ${esc(e.hours)} hours</span></div>
+        <span aria-hidden="true" class="fx-arrow">→</span>
+        <div><span class="small muted">In the Staff Directory</span><strong>${esc(c.name)}</strong><span class="small muted">ID ${esc(c.id)} · ${esc(c.store || 'no store')} · ${s.email ? esc(s.email) : 'no email'}${s.rate ? ' · RM ' + esc(s.rate) + '/h' : ' · no rate'}</span></div>
+      </div>
+      ${c.how === 'first' ? `<div class="notice">${icon.alert}<span class="grow">Only the first name is the same. Make sure it really is the same person: the payout goes to the person you choose.</span></div>` : ''}
+      <p class="small muted" style="margin:0;line-height:1.5">If yes: the payroll tab uses the Staff Directory’s name and Employee ID for them, their wages are worked out from the Staff Directory rate, and their Jibble ID is saved so next month matches by itself.</p>`, 'Yes, same person');
+    if (!ok) return;
+    try {
+      const res = await call('linkInMonth', { period: DATA.period, name: e.name, employeeId, expected: saw(e), confirm: true });
+      await load(DATA.period, { message: res.message });
+    } catch (err) {
+      toast('Not linked: ' + errText(err), 'error');
+    }
+  }
+  async function fxRate(key) {
+    const e = emp(key);
+    if (!e) return;
+    const input = document.getElementById('fx-rate-' + key);
+    const rate = input ? input.value.trim() : '';
+    if (input && (!rate || badAmount(rate))) { toast('Type the Hourly Rate as an amount like 10 or 10.50.', 'error'); return; }
+    try {
+      const res = await call('fixRate', { period: DATA.period, employeeId: e.id, rate, expected: saw(e) });
+      await load(DATA.period, { message: res.message });
+    } catch (err) {
+      toast('Rate not saved: ' + errText(err), 'error');
+    }
+  }
+  /** An email for someone who has none: saved to the Staff Directory (the one place a recipient comes from). */
+  async function fxEmail(id) {
+    const s = staffRow(id);
+    const input = document.getElementById('fx-email-' + id);
+    const email = input ? input.value.trim() : '';
+    if (!s) return;
+    if (!EMAIL_RE.test(email)) { toast('Type a full email address (for example name@example.com).', 'error'); return; }
+    const expected = {};
+    STAFF_FIELDS.forEach(([k]) => { expected[k] = s[k]; });
+    try {
+      const res = await call('saveStaff', { employeeId: id, expected, changes: { email } });
+      DATA.staff = res.staff;
+      await load(DATA.period, { message: s.name + ': email saved to the Staff Directory. Their payout email can now be sent once everything else is ready.' });
+    } catch (err) {
+      toast('Email not saved: ' + errText(err), 'error');
+    }
+  }
+
+  /* ---------- Update a month from Jibble, keeping what was typed (owner, 2026-11-03) ---------- */
+  function refillCard() {
+    const r = state.refill;
+    const fromJibble = !!(DATA.monthTab && DATA.monthTab.fromJibble);
+    const p = r.plan;
+    const typedText = (t) => t ? [t.claims ? t.claims + ' claim' + (t.claims === 1 ? '' : 's') : '', t.incentives ? t.incentives + ' incentive' + (t.incentives === 1 ? '' : 's') : '',
+      t.commission ? 'commission' : '', t.pay ? 'payment details' : ''].filter(Boolean).join(', ') : '';
+    return `<section class="card raised" aria-labelledby="rf-title">
+      <div class="card-head"><div><h2 id="rf-title">Update ${esc(DATA.period)} from Jibble</h2>
+        <span class="small muted">Brings in Jibble’s latest hours and keeps what you typed: claims, incentives, commission and payment details. Use this after fixing hours in Jibble or linking people. “Start a month” would wipe what you typed.</span></div></div>
+      <div class="card-body" style="display:flex;flex-direction:column;gap:14px">
+        ${!fromJibble ? '<span class="small muted">This tab was made by hand, so it is not filled from Jibble. Change it in the spreadsheet.</span>' : `
+        <div><button type="button" class="btn btn-secondary" data-action="refill-plan"${r.loading ? ' disabled' : ''}>${r.loading ? '<span class="spinner sm"></span>Checking Jibble…' : p ? 'Check again' : 'Check what would change'}</button>
+          <span class="small muted" style="margin-left:10px">Changes nothing until you confirm.</span></div>
+        ${r.error ? `<div class="notice error">${icon.alert}<span class="grow">${esc(r.error)}</span></div>` : ''}
+        ${p ? `
+          ${p.blockers.length ? `<div class="notice error">${icon.alert}<span class="grow"><strong>It cannot be done yet:</strong>${p.blockers.map((b) => `<span>${esc(b)}</span>`).join('')}</span></div>` : ''}
+          <div class="table-wrap"><table class="log"><thead><tr><th scope="col">Person</th><th scope="col" class="right">Hours now</th><th scope="col" class="right">Hours from Jibble</th><th scope="col">What you typed</th></tr></thead>
+            <tbody>${p.people.map((x) => `<tr><th scope="row"><strong>${esc(x.name)}</strong>${x.isNew ? ' <span class="badge b-ready">New</span>' : ''}${x.employeeId ? '' : ' <span class="badge b-attention">Not linked</span>'}</th>
+              <td class="right num">${x.isNew ? '—' : esc(x.oldHours)}</td><td class="right num"${!x.isNew && x.oldHours !== x.newHours ? ' style="font-weight:700"' : ''}>${esc(x.newHours)}</td>
+              <td class="small">${typedText(x.typed) ? 'Kept: ' + esc(typedText(x.typed)) : '<span class="muted">—</span>'}</td></tr>`).join('')}</tbody></table></div>
+          ${p.removed.length ? `<div class="notice">${icon.alert}<span class="grow"><strong>Not in Jibble, so they will be removed from this month:</strong><span>${p.removed.map((x) => esc(x.name)).join(', ')}</span><span>Add them again afterwards with Add person → Someone to this month only.</span></span></div>` : ''}
+          <div><button type="button" class="btn btn-primary" data-action="refill-go"${p.blockers.length ? ' disabled' : ''}>Update ${esc(DATA.period)} from Jibble</button>
+            <span class="small muted" style="margin-left:10px">Hours up to ${esc(p.upTo)}. Then run Prepare payouts again.</span></div>` : ''}`}
+      </div></section>`;
+  }
+  async function refillPlan() {
+    const r = state.refill;
+    r.loading = true; r.error = null; r.plan = null; render();
+    try { r.plan = await call('planRefill', { period: DATA.period }); } catch (err) { r.error = errText(err); }
+    r.loading = false; render();
+  }
+  async function refillGo() {
+    const r = state.refill;
+    if (!r.plan || r.plan.blockers.length) return;
+    const ok = await confirmBox('Update ' + DATA.period + ' from Jibble?', `<ul style="margin:0;padding-left:20px;line-height:1.7">
+        <li>Hours come from Jibble again, for ${r.plan.people.length} people.</li>
+        <li>Claims, incentives, commission and payment details you typed are kept.</li>
+        <li>Notes are Jibble’s again, and anyone marked Paid stops this from running.</li>
+        ${r.plan.removed.length ? `<li><strong>Removed:</strong> ${r.plan.removed.map((x) => esc(x.name)).join(', ')}</li>` : ''}</ul>
+      <label class="field">Type UPDATE to confirm<input class="input" id="confirm-word" autocomplete="off"></label>`, 'Update', !!r.plan.removed.length);
+    if (!ok) return;
+    if (((document.getElementById('confirm-word') || {}).value || '').trim() !== 'UPDATE') { toast('Not updated: UPDATE was not typed.', 'error'); return; }
+    try {
+      const res = await call('refillMonth', { period: DATA.period, confirm: 'UPDATE', expected: { removed: r.plan.removed.map((x) => x.name) } });
+      r.plan = null;
+      await load(DATA.period, { full: true, message: res.message.split('\n')[0] });
+    } catch (err) {
+      toast('Not updated: ' + errText(err), 'error');
+    }
+  }
+
+  /* ---------- Staff Directory warnings (owner, 2026-11-03) ---------- */
+  const STAFF_ISSUES = {
+    noemail: [(s) => s.active && !s.email, 'No email', 'their payout email cannot be sent until you add one'],
+    norate: [(s) => s.active && !s.rate, 'No hourly rate', 'they get no wages or Total Payout'],
+    nojibble: [(s) => noJibble(s), 'No Jibble ID', 'their Jibble hours only come in when their name is exactly the same in Jibble'],
+    noid: [(s) => !s.id, 'No Employee ID', 'they cannot be paid: press Give ID']
+  };
+  function staffBanner() {
+    const counts = Object.keys(STAFF_ISSUES).map((k) => [k, DATA.staff.filter(STAFF_ISSUES[k][0]).length]).filter(([, n]) => n);
+    if (!counts.length) return '';
+    return `<div class="notice" role="note">${icon.alert}<span class="grow">${counts.map(([k, n]) =>
+      `<span><strong>${n} ${n === 1 ? 'person has' : 'people have'} ${STAFF_ISSUES[k][1].replace(/^No /, 'no ').replace('Jibble ID', 'Jibble ID').replace('Employee ID', 'Employee ID')}:</strong> ${esc(STAFF_ISSUES[k][2])}. <button type="button" class="link-btn" data-seg="staff-issue" data-value="${k}">Show them</button></span>`).join('')}</span></div>`;
   }
 
   /* ---------- Payout Control: the tab as it is, for the chosen month (owner, 2026-11-03) ---------- */
@@ -525,6 +707,7 @@
         </div>
       </header>
       ${liveStrip()}${toastHTML()}
+      ${fixCard()}
 
       <section class="store-totals" aria-label="Totals by store">
         <div><span class="small muted">SS18</span><strong class="num">${esc(sm.ss18.total)}</strong><span class="small muted">${sm.ss18.employees} people</span></div>
@@ -852,6 +1035,7 @@
       </header>
       ${liveStrip()}${toastHTML()}
       ${monthSetupCard()}
+      ${refillCard()}
       <section class="card raised" aria-labelledby="jt">
         <div class="card-head"><div><h2 id="jt">Jibble hours</h2><span class="small muted">The ${esc(DATA.period)} tab was filled from Jibble on ${esc(j.filledAt)}</span></div></div>
         <div class="card-body tiles">
@@ -1167,7 +1351,7 @@
           <div>
             <div style="display:flex;justify-content:space-between;align-items:center"><span class="badge b-attention">CANNOT SEND</span><span class="kpi-value" style="font-size:24px">${cannot.length}</span></div>
             <span class="small muted">Each one says why. Open the person to fix it.</span>
-            <ul class="plain-list">${cannot.map((c) => { const em = byName(c.name); return `<li class="cs-row"><span style="display:flex;flex-direction:column;gap:2px"><span>${esc(c.name)} <span class="small muted">· ${esc(c.store)}</span></span><span class="small" style="color:var(--review-ink)">${esc(c.why)}</span></span>${em ? `<button type="button" class="link-btn" data-open="${esc(em.id)}" style="font-size:13px;flex:none">Fix →</button>` : ''}</li>`; }).join('') || '<li class="muted">No one.</li>'}</ul>
+            <ul class="plain-list">${cannot.map((c) => { const em = byName(c.name); return `<li class="cs-row"><span style="display:flex;flex-direction:column;gap:2px"><span>${esc(c.name)} <span class="small muted">· ${esc(c.store)}</span></span><span class="small" style="color:var(--review-ink)">${esc(c.why)}</span>${em && staffRow(em.id) && !staffRow(em.id).email ? emailInline(em.id) : ''}</span>${em ? `<button type="button" class="link-btn" data-open="${esc(em.id)}" style="font-size:13px;flex:none">Fix →</button>` : ''}</li>`; }).join('') || '<li class="muted">No one.</li>'}</ul>
           </div>
           <div>
             <div style="display:flex;justify-content:space-between;align-items:center"><span class="badge b-sent">ALREADY SENT</span><span class="kpi-value" style="font-size:24px">${sent.length}</span></div>
@@ -1375,14 +1559,16 @@
               <div class="notice info">${icon.info}<span class="grow">This changes only ${esc(DATA.period)}. If the month is filled from Jibble again, Jibble’s hours replace these. The Staff Directory rate is not changed.</span></div>` : ''}
               <div class="sync">
                 <span style="display:inline-flex;gap:6px;align-items:center">${icon.refresh}Filled from Jibble · ${esc(DATA.jibble.filledAt)}</span>
-                ${flagCount ? `<span style="color:var(--attention-ink)">${flagCount} day${flagCount === 1 ? '' : 's'} without a clock-out</span>` : ''}
+                ${flagCount ? `<span style="color:var(--failed-ink)">${[['No clock-out', 'without a clock-out'], ['Long day', 'over 12 hours: check in Jibble']]
+                  .map(([f, t]) => [e.attendance.filter((x) => x.flag === f).length, t]).filter(([n]) => n)
+                  .map(([n, t]) => n + ' day' + (n === 1 ? '' : 's') + ' ' + t).join(' · ')}</span>` : ''}
               </div>
               ${e.lineView.map(([store, dates, hours, rate, wages]) => `
                 <div class="rate-line"><div><strong>${esc(store)} · ${esc(dates)}</strong><br><span class="small muted num">${esc(hours)} hours × ${rate == null ? 'no rate' : esc(rate)}</span></div><span class="num" style="font-weight:bold">${money(wages)}</span></div>`).join('')}
               <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px"><span class="label">Daily attendance</span><span class="small muted num">${e.attendance.length} days · ${esc(e.hours)} hours</span></div>
               <div class="days"><table>
                 <thead><tr><th scope="col">Date</th><th scope="col">Store</th><th scope="col" style="text-align:right">Hours</th><th scope="col">Note</th></tr></thead>
-                <tbody>${e.attendance.map((x) => `<tr class="${x.flag ? 'flag' : ''}"><td>${esc(x.label)}</td><td>${esc(x.store)}</td><td class="right num">${x.hours === '' ? '—' : esc(x.hours)}</td><td>${x.flag ? `<span class="badge b-attention">${esc(x.flag)}</span>` : ''}</td></tr>`).join('')}</tbody>
+                <tbody>${e.attendance.map((x) => `<tr class="${x.flag ? 'flag' : ''}"><td>${esc(x.label)}</td><td>${esc(x.store)}</td><td class="right num">${x.hours === '' ? '—' : esc(x.hours)}</td><td>${x.flag ? `<span class="badge b-failed">${esc(x.flag)}</span>` : ''}</td></tr>`).join('')}</tbody>
               </table></div>
               <span class="hint">${e.hoursEdit && e.hoursEdit.why ? esc(e.hoursEdit.why) : isPaid ? 'Marked Paid: the hours are locked.' : 'Change the hours here with <strong>Edit hours</strong>, or correct them in Jibble and fill the month from Jibble again (that replaces hours typed here).'} Anyone marked Paid is never changed by Jibble.</span>
               ${DATA.monthTab && DATA.monthTab.fromJibble && canEdit && !isPaid && !String(e.id).startsWith('name:') ? `<button type="button" class="link-btn" data-action="remove-from-month" style="align-self:flex-start;color:var(--failed-ink)">Remove ${esc(e.name.split(' ')[0])} from ${esc(DATA.period)}…</button>` : ''}
@@ -1625,6 +1811,7 @@
     const rows = DATA.staff
       .filter((s) => st.show === 'all' || (st.show === 'active' ? s.active : !s.active))
       .filter((s) => !q || [s.name, s.alias, s.id, s.email].some((v) => String(v || '').toLowerCase().includes(q)))
+      .filter((s) => st.issue === 'all' || (STAFF_ISSUES[st.issue] && STAFF_ISSUES[st.issue][0](s)))
       .sort((a, b) => a.name.localeCompare(b.name));
     return `
       <header class="page-head">
@@ -1632,16 +1819,11 @@
         <div class="tools">${refreshBtn()}<button type="button" class="btn btn-primary" data-action="staff-add">${icon.plus || '+'} Add person</button></div>
       </header>
       ${toastHTML()}
-      ${(() => {
-        const missing = DATA.staff.filter(noJibble).length;
-        const noId = DATA.staff.filter((s) => !s.id).length;
-        return missing || noId ? `<div class="notice" role="note">${icon.alert}<span class="grow">
-          ${missing ? `<span><strong>${missing} active ${missing === 1 ? 'person has' : 'people have'} no Jibble ID.</strong> Their Jibble hours only come in when their name is exactly the same in Jibble. Open them with <b>Edit</b> and pick their name from Jibble’s list.</span>` : ''}
-          ${noId ? `<span><strong>${noId} ${noId === 1 ? 'row has' : 'rows have'} no Employee ID</strong>, so ${noId === 1 ? 'that person' : 'they'} cannot be paid. Press <b>Give ID</b>.</span>` : ''}</span></div>` : '';
-      })()}
+      ${staffBanner()}
       <div class="card card-body" style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:16px">
         <label class="field" style="flex:1 1 240px">Search<input class="input" type="search" id="staff-q" value="${esc(st.q)}" placeholder="Name, Employee ID or email"></label>
         <div class="field"><span>Show</span>${seg('staff-show', [['active', 'Active'], ['inactive', 'Not active'], ['all', 'Everyone']], st.show, 'Show')}</div>
+        <div class="field"><span>Problem</span>${seg('staff-issue', [['all', 'Any']].concat(Object.keys(STAFF_ISSUES).map((k) => [k, STAFF_ISSUES[k][1]])), st.issue, 'Problem')}</div>
       </div>
       <section class="card raised" aria-labelledby="sdt">
         <div class="card-head"><h2 id="sdt">People</h2><span class="small muted">${rows.length} of ${DATA.staff.length}</span></div>
@@ -1739,9 +1921,9 @@
   }
 
   /** The edit window; id null = add a new person. */
-  function openStaff(id) {
+  function openStaff(id, prefill) {
     const adding = id === null;
-    const s = adding ? { id: '', internalId: '', name: '', alias: '', email: '', store: '', active: true, rate: '', ss18: '', ioi: '' } : staffRow(id);
+    const s = adding ? Object.assign({ id: '', internalId: '', name: '', alias: '', email: '', store: '', active: true, rate: '', ss18: '', ioi: '' }, prefill || {}) : staffRow(id);
     if (!s) return;
     state.staff.editId = adding ? null : id;
     document.getElementById('staff-title').textContent = adding ? 'Add a person' : 'Edit ' + s.name;
@@ -1761,7 +1943,7 @@
           : `<div class="field"><span>Employee ID</span><div class="locked"><span>${esc(s.id)}</span><span class="calc">${lockSvg}Not changeable</span></div></div>`}
         <div class="field"><label for="sf-name">Name ${req}</label><input class="input" id="sf-name" value="${esc(s.name)}"></div>
         <div class="field"><label for="sf-alias">Payment Slip Name Alias</label><input class="input" id="sf-alias" value="${esc(s.alias)}"><span class="hint">The short name on their payment slip file, if different.</span></div>
-        <div class="field"><label for="sf-email">Employee Email ${req}</label><input class="input" type="email" id="sf-email" value="${esc(s.email)}"></div>
+        <div class="field"><label for="sf-email">Employee Email <span class="muted">(optional)</span></label><input class="input" type="email" id="sf-email" value="${esc(s.email)}"><span class="hint">Without an email they are held: their payout email cannot be sent until you add one.</span></div>
         <div class="field"><label for="sf-store">Store ${req}</label><input class="input" id="sf-store" list="sf-stores" value="${esc(s.store)}"><datalist id="sf-stores">${known.map((x) => `<option value="${esc(x)}">`).join('')}</datalist></div>
         <div class="field"><label for="sf-rate">Hourly Rate ${req}</label><div class="money-in"><span>RM</span><input class="input" id="sf-rate" inputmode="decimal" value="${esc(s.rate)}"></div></div>
         <div class="field"><label for="sf-ss18">Jibble ID (SS18)</label><input class="input" id="sf-ss18" list="sf-ss18-list" value="${esc(s.ss18)}" autocomplete="off">${jibbleList('SS18')}</div>
@@ -1793,7 +1975,7 @@
     const label = btn.textContent;
     let request;
     // Owner, 2026-11-03: what a payout needs is required when adding someone.
-    const missing = [['name', 'the name'], ['store', 'the store'], ['email', 'the email'], ['rate', 'the Hourly Rate']]
+    const missing = [['name', 'the name'], ['store', 'the store'], ['rate', 'the Hourly Rate']]
       .filter(([k]) => adding && !val(k)).map(([, l]) => l);
     if (missing.length) { staffError('Fill in ' + missing.join(', ') + '.'); return; }
     if ((adding || !s.id) && val('id') && !/^[A-Za-z0-9][A-Za-z0-9._/-]{0,19}$/.test(val('id'))) { staffError('The Employee ID can have letters and numbers only, like 031.'); return; }
@@ -1826,6 +2008,7 @@
       if (res.staffNextId) DATA.staffNextId = res.staffNextId;
       document.getElementById('staff-dialog').close();
       toast(res.message || 'Saved.', 'ok');
+      load(DATA.period, { message: res.message || 'Saved.' });   // Needs fixing and the warnings read the Staff Directory too
     } catch (err) {
       staffError('Not saved: ' + errText(err));
       btn.disabled = false; btn.textContent = label;
@@ -1984,7 +2167,7 @@
     const active = document.activeElement && view.contains(document.activeElement) && document.activeElement.id;
     const caret = active && document.activeElement.selectionStart;
     view.innerHTML = ROUTES[route]();
-    document.title = (CONNECTED ? '' : 'DEMO · ') + TITLES[route] + ' — Machino Retail Payout';
+    document.title = (CONNECTED ? '' : 'DEMO · ') + 'Machino Payout · ' + TITLES[route];
     document.querySelectorAll('.nav a').forEach((a) => {
       if (a.dataset.route === route) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
     });
@@ -1999,6 +2182,7 @@
       if (el) { el.focus(); try { el.setSelectionRange(caret, caret); } catch (e) { /* not a text input */ } }
     }
     if (opts && opts.newPage) { view.focus({ preventScroll: true }); window.scrollTo(0, 0); }
+    if (state.scrollToFix && route === 'payroll') { state.scrollToFix = false; const box = document.getElementById('needs-fixing'); if (box) box.scrollIntoView({ block: 'start' }); }
   }
 
   /* ---------- Opening Drive and the sheet ---------- */
@@ -2130,6 +2314,15 @@
   view.addEventListener('click', (e) => {
     const t = e.target;
     if (t.closest('.vcell')) return; // the Verified tick box, not "open this person"
+    if (t.closest('[data-goto-fix]')) { state.scrollToFix = true; }
+    const fxLinkBtn = t.closest('[data-fx-link]');
+    if (fxLinkBtn) { const [k, id] = fxSplit(fxLinkBtn.dataset.fxLink); fxLink(k, id); return; }
+    const fxRateBtn = t.closest('[data-fx-rate]');
+    if (fxRateBtn) { fxRate(fxRateBtn.dataset.fxRate); return; }
+    const fxEmailBtn = t.closest('[data-fx-email]');
+    if (fxEmailBtn) { fxEmail(fxEmailBtn.dataset.fxEmail); return; }
+    const fxNew = t.closest('[data-fx-addnew]');
+    if (fxNew) { const f = fxFind(fxNew.dataset.fxAddnew); openStaff(null, f ? { name: f.name, store: f.stores[0] || '' } : null); return; }
     const staffEdit = t.closest('[data-staff-edit]');
     if (staffEdit) { openStaff(staffEdit.dataset.staffEdit); return; }
     const segBtn = t.closest('[data-seg]');
@@ -2140,6 +2333,7 @@
       if (g === 'branch') state.branch = v;
       if (g === 'history-mode') state.history.mode = v;
       if (g === 'staff-show') state.staff.show = v;
+      if (g === 'staff-issue') state.staff.issue = v;
       if (g === 'pc-store') state.control.store = v;
       render();
       const again = view.querySelector(`[data-seg="${g}"][data-value="${v}"]`);
@@ -2178,6 +2372,8 @@
     if (a === 'drive-load') loadDriveSlips();
     if (a === 'drive-rename') renameDriveSlips();
     if (a === 'staff-add') openStaff(null);
+    if (a === 'refill-plan') refillPlan();
+    if (a === 'refill-go') refillGo();
     if (a === 'month-setup') setUpMonth(t.closest('[data-action]'));
     if (a === 'tool-check') runCheckSystem();
     if (a === 'tool-ids') loadIdFills();

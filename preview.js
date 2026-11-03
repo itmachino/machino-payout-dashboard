@@ -21,18 +21,21 @@ window.DashboardPreview = (function () {
   const DIRECTORY = [
     { id: 'MCH-001', name: 'Siti Nurhaliza binti Omar', alias: 'Siti', store: 'SS18', email: 'siti.o@example.com', ss18: 'SS18-0112', ioi: '' },
     { id: 'MCH-003', name: 'Nur Aina binti Zulkifli', alias: '', store: 'SS18', email: 'aina.z@example.com', ss18: 'SS18-0108', ioi: '' },
-    { id: 'MCH-009', name: 'Muhammad Aiman Hakim bin Rosli', alias: 'Aiman', store: 'SS18', email: 'aiman.h@example.com', ss18: 'SS18-0121', ioi: '' },
+    { id: 'MCH-009', name: 'Muhammad Aiman Hakim bin Rosli', alias: 'Aiman', store: 'SS18', email: '', ss18: 'SS18-0121', ioi: '' },
     { id: 'MCH-011', name: 'Chloe Wong Mei Yee', alias: '', store: 'SS18', email: 'chloe.w@example.com', ss18: 'SS18-0131', ioi: '' },
     { id: 'MCH-014', name: 'Tan Mei Ling', alias: '', store: 'IOI', email: 'meiling.t@example.com', ss18: '', ioi: 'IOI-0204' },
-    { id: 'MCH-017', name: 'Hafiz Rahman bin Yusof', alias: '', store: 'IOI', email: 'hafiz.r@example.com', ss18: '', ioi: 'IOI-0217' },
+    { id: 'MCH-017', name: 'Hafiz Rahman bin Yusof', alias: '', store: 'IOI', email: 'hafiz.r@example.com', ss18: '', ioi: 'IOI-0217', rate: '' },
     { id: 'MCH-019', name: 'Farah Izzati binti Kamal', alias: '', store: 'SS18', email: 'farah.i@example.com', ss18: 'SS18-0119', ioi: '' },
     { id: 'MCH-021', name: 'Daniel Lim Wei Jie', alias: '', store: 'SS18', email: 'daniel.l@example.com', ss18: 'SS18-0125', ioi: 'IOI-0230' },
     { id: 'MCH-024', name: 'Arjun a/l Pillai', alias: '', store: 'IOI', email: 'arjun.p@example.com', ss18: '', ioi: 'IOI-0224' },
     { id: 'MCH-026', name: 'Kevin Ong Jun Hao', alias: '', store: 'IOI', email: 'kevin.o@example.com', ss18: '', ioi: 'IOI-0226' },
     { id: 'MCH-027', name: 'Nur Adila Faezza binti Zakaria', alias: 'Adila', store: 'IOI', email: 'adila.z@example.com', ss18: '', ioi: 'IOI-0241' },
     { id: 'MCH-028', name: 'Nur Adlina binti Hassan', alias: '', store: 'IOI', email: 'adlina.h@example.com', ss18: '', ioi: '' },
-    { id: 'MCH-030', name: 'Rina Kaur', alias: '', store: 'IOI', email: 'rina.k@example.com', ss18: '', ioi: '' }
+    { id: 'MCH-030', name: 'Rina Kaur', alias: '', store: 'IOI', email: 'rina.k@example.com', ss18: '', ioi: '' },
+    { id: 'MCH-031', name: 'Nadia Nursyifaa binti Mohd Nizam', alias: 'Nadia', store: 'IOI', email: 'nadia.n@example.com', ss18: '', ioi: '' }
   ];
+  // On the October tab under the name Jibble uses; nothing in the Staff Directory has exactly that name.
+  const UNLINKED = [{ name: 'Nadia Syifa', stores: ['IOI'], hours: 56 }];
 
   // This month's payout rows (invented). Amounts are what the sheet would show.
   const PEOPLE = [
@@ -166,6 +169,16 @@ window.DashboardPreview = (function () {
       e.canEdit = !['Sent', 'Review Required'].includes(e.status);
       return e;
     });
+    if (period === 'October 2026') {
+      UNLINKED.forEach((u) => {
+        const e = { id: 'name:' + u.name.toLowerCase(), name: u.name, stores: u.stores.slice(), email: '', jibble: '', lines: [[u.stores[0], '1–31 Oct', u.hours, null]],
+          claims: [], incentives: [], commission: null, payment: 'Not paid', paymentId: '', paymentDate: '', verified: false, status: 'Needs Attention',
+          issue: '“' + u.name + '” is not in the Staff Directory under this name.', fix: 'Link them in Needs fixing, then run Prepare Payout.', pdf: 'Not made yet', slip: 'Missing', canEdit: false };
+        e.attendance = attendance({ lines: e.lines, open: [], stores: e.stores }, short, 3);
+        settle(e);
+        employees.push(e);
+      });
+    }
     const existing = DIRECTORY.filter((d) => PEOPLE.some((p) => p.id === d.id) && (!oct || !MISSING_SLIPS.includes(d.id)))
       .map((d) => slipTargetName_(d.store, d.name, period));
     // Two files not yet under the standard name, to show renaming.
@@ -228,8 +241,40 @@ window.DashboardPreview = (function () {
     return new Date().toLocaleTimeString('en-MY', { hour: 'numeric', minute: '2-digit' }).toLowerCase();
   }
 
+  const unlinked = (e) => String(e.id).startsWith('name:');
+  const NAME_WORDS_SKIPPED = ['bin', 'binti', 'bt', 'bte', 'b', 'a/p', 'ap', 'a/l', 'al'];
+  const nameWords = (n) => n.toLowerCase().split(/\s+/).filter((w) => w && !NAME_WORDS_SKIPPED.includes(w));
+  function demoFixes(m) {
+    const taken = new Set(m.employees.filter((e) => !unlinked(e)).map((e) => e.id));
+    const out = [];
+    m.employees.forEach((e) => {
+      const problems = [];
+      if (unlinked(e)) {
+        const w = nameWords(e.name);
+        const candidates = DIRECTORY.filter((d) => d.id && d.active !== false && !taken.has(d.id)).map((d) => {
+          const dw = nameWords(d.name);
+          const small = w.length <= dw.length ? w : dw;
+          const big = small === w ? dw : w;
+          const how = d.name.toLowerCase() === e.name.toLowerCase() ? 'exact' : small.length >= 2 && small.every((x) => big.includes(x)) ? 'words' : w[0] && w[0] === dw[0] ? 'first' : '';
+          return how ? { id: d.id, name: d.name, store: d.store, how, hasJibble: !!(d.ss18 || d.ioi) } : null;
+        }).filter(Boolean).sort((a, b) => ['exact', 'words', 'first'].indexOf(a.how) - ['exact', 'words', 'first'].indexOf(b.how));
+        problems.push({ code: 'link', text: '“' + e.name + '” is not linked to a Staff Directory person, so no wages or Total Payout yet.', candidates, giveId: null, inJibble: true });
+      } else {
+        const d = dir(e.id);
+        if (e.lines.some((l) => l[3] == null)) {
+          problems.push({ code: 'rate', text: 'No Hourly Rate, so no wages or Total Payout yet.', directoryRate: d.rate === undefined ? '9.50' : d.rate, canFix: e.hoursEdit.why === '' });
+        }
+        const open = e.attendance.filter((x) => x.flag === 'No clock-out').length;
+        if (open) problems.push({ code: 'clockout', text: open + ' day' + (open === 1 ? '' : 's') + ' without a clock-out, so no wages yet.' });
+        if (!d.email) problems.push({ code: 'email', text: 'No email address, so their payout email cannot be sent.' });
+      }
+      if (problems.length) out.push({ key: e.id, name: e.name, stores: e.stores, hours: e.hours, employeeId: unlinked(e) ? null : e.id, problems });
+    });
+    return out.sort((a, b) => (a.problems[0].code === 'link' ? 0 : 1) - (b.problems[0].code === 'link' ? 0 : 1));
+  }
+
   function payrollPeople(m) {
-    return m.employees.map((e) => ({ id: e.id, name: e.name, store: dir(e.id).store }));
+    return m.employees.map((e) => ({ id: e.id, name: e.name, store: (dir(e.id) || { store: e.stores[0] }).store }));
   }
 
   return {
@@ -274,6 +319,7 @@ window.DashboardPreview = (function () {
         },
         staff: DIRECTORY.map(staffView),
         staffNextId: nextId(),
+        fixes: demoFixes(m),
         monthTab: { fromJibble: !handMade(period) },
         claimTypes: CLAIM_TYPES_IN_SHEET.slice(),
         documents: [
@@ -439,7 +485,7 @@ window.DashboardPreview = (function () {
       const p = Object.assign({}, args.person || {});
       p.id = String(p.id || '').trim() || nextId();
       if (!/^[A-Za-z0-9][A-Za-z0-9._/-]{0,19}$/.test(p.id)) fail('Type the Employee ID, e.g. 031 (letters, numbers, no spaces). Nothing was added.');
-      if (!p.store || !p.email || !p.rate) fail('Fill in the store, email and Hourly Rate. Nothing was added.');
+      if (!p.store || !p.rate) fail('Fill in the store and Hourly Rate. Nothing was added.');
       if (!String(p.name || '').trim()) fail('Type the name. Nothing was added.');
       if (dir(p.id.trim())) fail('Employee ID ' + p.id + ' is already in the Staff Directory. Nothing was added.');
       if (DIRECTORY.some((x) => x.name.toLowerCase() === p.name.trim().toLowerCase())) fail('Someone named "' + p.name + '" is already in the Staff Directory. Nothing was added.');
@@ -488,6 +534,67 @@ window.DashboardPreview = (function () {
       if (e.payment === 'Paid') fail(e.name + ' is marked Paid, so they stay on the month as a record. Nothing was changed.');
       m.employees.splice(m.employees.indexOf(e), 1);
       return { period: args.period, message: e.name + ' was removed from "' + args.period + '" in this preview only.' };
+    },
+
+    linkInMonth(args) {
+      const m = month(args.period);
+      const e = m.employees.find((x) => x.name === args.name && unlinked(x));
+      if (!args.confirm) fail('Confirm that this is the right person first.');
+      if (!e) fail('"' + args.name + '" is no longer on the "' + args.period + '" tab. Refresh, then try again. Nothing was changed.');
+      if (changedSince(e, args.expected)) fail(e.name + ' changed in the spreadsheet since you opened them. Refresh, then try again. Nothing was saved.');
+      const d = dir(args.employeeId);
+      if (!d) fail('That Employee ID is not in the Staff Directory exactly once. Nothing was changed.');
+      if (d.active === false) fail(d.name + ' is not Active in the Staff Directory, so they cannot be paid. Nothing was changed.');
+      if (m.employees.some((x) => x.id === d.id)) fail(d.name + ' is already on the "' + args.period + '" tab. Nothing was changed.');
+      const was = e.name;
+      const rate = d.rate === undefined ? 9.5 : (d.rate === '' ? null : Number(d.rate));
+      const col = e.stores[0] === 'SS18' ? 'ss18' : 'ioi';
+      Object.assign(e, { id: d.id, name: d.name, email: mask(d.email || 'x@example.com'), issue: 'Not prepared yet.', fix: 'Run Prepare Payout.', canEdit: true,
+        lines: [[e.lines[0][0], e.lines[0][1], e.lines[0][2], rate]] });
+      let jibble = '';
+      if (!d[col]) { d[col] = 'IOI-0399'; jibble = ' Their Jibble ID was saved, so next month they match by themselves.'; }
+      e.jibble = [d.ss18, d.ioi].filter(Boolean).join(' · ');
+      settle(e);
+      return { employee: clone(e), message: was + ' is now linked to ' + d.name + ' (Employee ID ' + d.id + ').' + (rate == null ? ' They still have no Hourly Rate: add one in Needs fixing.' : ' Wages worked out from the Staff Directory rate.') + jibble + ' Run Prepare payouts so they can be checked and sent. (Preview only: the sheet was not changed.)' };
+    },
+
+    fixRate(args) {
+      const m = month(args.period);
+      const e = m.employees.find((x) => x.id === args.employeeId);
+      if (!e) fail('This person is no longer on the month tab. Refresh and try again.');
+      if (changedSince(e, args.expected)) fail(e.name + ' changed in the spreadsheet since you opened them. Refresh, then try again. Nothing was saved.');
+      if (e.payment === 'Paid') fail(e.name + ' is marked Paid, so the payout amounts are locked. Set Payment Status back first. Nothing was changed.');
+      const d = dir(e.id);
+      let rate = d.rate === undefined ? 9.5 : (d.rate === '' ? null : Number(d.rate));
+      let saved = false;
+      if (rate == null) {
+        if (!args.rate || !/^\d+(\.\d{1,2})?$/.test(args.rate) || Number(args.rate) <= 0) fail('Type the Hourly Rate, e.g. 10 or 10.50. Nothing was changed.');
+        rate = Number(args.rate); d.rate = String(args.rate); saved = true;
+      }
+      e.lines = e.lines.map((l) => [l[0], l[1], l[2], l[3] == null ? rate : l[3]]);
+      settle(e);
+      let message = e.name + ': Hourly Rate RM' + rate.toFixed(2) + (saved ? ' saved to the Staff Directory and' : ' from the Staff Directory') + ' put in this month. Wages worked out.';
+      if (e.verified) { e.verified = false; message += ' Manager Verified was cleared because the payout changed.'; }
+      return { employee: clone(e), message: message + ' Run Prepare payouts again. (Preview only.)' };
+    },
+
+    planRefill(args) {
+      const m = month(args.period);
+      const paid = m.employees.filter((e) => e.payment === 'Paid').map((e) => e.name);
+      return { period: args.period, upTo: '23/10/2026', removed: [],
+        blockers: paid.length ? ['"' + args.period + '" already has people marked Paid (' + paid.slice(0, 3).join(', ') + '), so it was not filled in again. Change the hours in that tab by hand.'] : [],
+        people: m.employees.map((e, i) => ({ name: e.name, employeeId: unlinked(e) ? '' : e.id, isNew: false, oldHours: e.hours, newHours: (Number(e.hours) + (i === 0 ? 8 : 0)).toFixed(2),
+          typed: e.claims.length || e.incentives.length || e.commission ? { claims: e.claims.length, incentives: e.incentives.length, commission: !!e.commission, pay: false } : null })) };
+    },
+
+    refillMonth(args) {
+      if (args.confirm !== 'UPDATE') fail('Type UPDATE to confirm.');
+      const m = month(args.period);
+      if (m.employees.some((e) => e.payment === 'Paid')) fail('"' + args.period + '" already has people marked Paid, so it was not filled in again. Nothing was changed.');
+      const first = m.employees[0];
+      first.lines = first.lines.map((l, i) => i === 0 ? [l[0], l[1], l[2] + 8, l[3]] : l);
+      settle(first);
+      return { period: args.period, message: 'Updated from Jibble up to 23/10/2026 in this preview only. ' + m.employees.length + ' people. What was typed was kept. Run Prepare payouts again so everyone is checked against the new hours.' };
     },
 
     getPayoutControl(args) {

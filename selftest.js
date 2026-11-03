@@ -35,21 +35,21 @@
     check('overview loads', await until(() => P.data && $('#view h1') && $('#view h1').textContent === 'Overview'));
     check('TEST MODE badge from the backend', $('.mode-pill') && $('.mode-pill').textContent === 'TEST MODE');
     check('no LIVE strip in Test Mode', !$('.live-strip'));
-    check('4 missing slips on the overview', P.data.summary.all.missingSlips === 4, P.data.summary.all.missingSlips);
+    check('5 missing slips on the overview', P.data.summary.all.missingSlips === 5, P.data.summary.all.missingSlips);
     check('attention list shows people', $$('.att-row').length >= 4, $$('.att-row').length);
 
     // 2. Payroll Management
     check('payroll page opens', await go('#payroll', 'Payroll Management'));
-    check('11 employees listed', $$('.emp-table tbody tr').length === 11, $$('.emp-table tbody tr').length);
+    check('12 employees listed', $$('.emp-table tbody tr').length === 12, $$('.emp-table tbody tr').length);
     check('store totals shown', $$('.store-totals > div').length === 3);
     input($('#pm-q'), 'tan');
     check('search by name', await until(() => $$('.emp-table tbody tr').length === 1), $$('.emp-table tbody tr').length);
     input($('#pm-q'), 'mch-02');
     check('search by Employee ID', await until(() => $$('.emp-table tbody tr').length === 4), $$('.emp-table tbody tr').length);
     input($('#pm-q'), '');
-    await until(() => $$('.emp-table tbody tr').length === 11);
+    await until(() => $$('.emp-table tbody tr').length === 12);
     $('[data-status-tile="slip"]').click();
-    check('missing-slip filter', $$('.emp-table tbody tr').length === 4, $$('.emp-table tbody tr').length);
+    check('missing-slip filter', $$('.emp-table tbody tr').length === 5, $$('.emp-table tbody tr').length);
     $('[data-status-tile="all"]').click();
 
     // 2b. Manager Verified: one person at a time, never "all"
@@ -75,7 +75,7 @@
     const firstToCheck = P.data.employees.filter((e) => e.status !== 'Sent' && e.total != null && !e.verified)
       .sort((x, y) => x.name.toLowerCase() < y.name.toLowerCase() ? -1 : 1)[0];
     check('"Review one by one" opens the first person still to check', await until(() => P.state.openId === firstToCheck.id), P.state.openId + ' vs ' + firstToCheck.id);
-    check('panel shows where you are', /Person \d+ of 11/.test($('.review-bar').textContent));
+    check('panel shows where you are', /Person \d+ of 12/.test($('.review-bar').textContent));
     const at = P.state.openId;
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
     check('→ key moves to the next person', await until(() => P.state.openId && P.state.openId !== at));
@@ -140,7 +140,7 @@
     // 6. Bulk slip upload
     check('slips page opens', await go('#slips', 'Payment Slips'));
     $('[data-action="slips-sample"]').click();
-    check('sample files planned', await until(() => P.state.slips.plan && P.state.slips.plan.rows.length === 8 && !P.state.slips.planning));
+    check('sample files planned', await until(() => P.state.slips.plan && P.state.slips.plan.rows.length === 8 && !P.state.slips.planning), JSON.stringify(P.state.slips.error || (P.state.slips.plan && P.state.slips.plan.rows.length)));
     const st = (name, n) => P.state.slips.plan.rows.filter((r) => r.name === name)[n || 0];
     check('"SS18 Nur Aina - …" matched', st('SS18 Nur Aina - Retail Wages October 2026.pdf').employeeId === 'MCH-003');
     check('same file twice → DUPLICATE', st('SS18 Nur Aina - Retail Wages October 2026.pdf', 1).status === 'DUPLICATE');
@@ -151,18 +151,19 @@
     check('existing slip → CONFLICT', st('Siti - Retail Wages.pdf').status === 'CONFLICT');
     check('.docx refused', st('bank notes.docx').status === 'NOT_PDF');
     check('target name is the standard name', st('Aiman - payslip.pdf').target === 'SS18 Muhammad Aiman Hakim bin Rosli - Retail Wages and Commission for October 2026 Payment Slip.pdf');
-    check('missing list: 1 left (Hafiz)', P.state.slips.plan.missing.length === 1 && P.state.slips.plan.missing[0].id === 'MCH-017');
+    // Nadia Syifa (not linked to the Staff Directory yet) has no slip either, so two are still missing.
+    check('missing list: 2 left (Hafiz and the unlinked Nadia)', P.state.slips.plan.missing.length === 2 && P.state.slips.plan.missing.some((x) => x.id === 'MCH-017'));
     const key = P.state.slips.files.find((f) => f.name === 'Nur - slip.pdf').key;
     change($('#pick-' + key), 'MCH-017');
     check('manual pick makes it ready', await until(() => !P.state.slips.planning && st('Nur - slip.pdf').status === 'READY' && st('Nur - slip.pdf').employeeId === 'MCH-017'));
-    check('nobody missing after the picks', P.state.slips.plan.missing.length === 0);
+    check('only the unlinked person is missing after the picks', P.state.slips.plan.missing.length === 1 && /nadia/i.test(P.state.slips.plan.missing[0].name));
     check('save button counts 4', /Save 4 slips/.test($('[data-action="slips-save"]').textContent));
     $('[data-action="slips-save"]').click();
     check('save confirmation lists 4', await until(() => $('#slip-save-dialog').open && $$('#slip-save-list li').length === 4));
     $('#slip-save-go').click();
     check('4 slips saved', await until(() => P.state.slips.result && P.state.slips.result.saved.length === 4, 6000));
     check('blocked files stay; the duplicate of a saved file goes', await until(() => P.state.slips.files.length === 3 && !P.state.slips.planning));
-    check('dashboard now shows 0 missing slips', await until(() => P.data.summary.all.missingSlips === 0), P.data.summary.all.missingSlips);
+    check('dashboard now shows 1 missing slip (Nadia)', await until(() => P.data.summary.all.missingSlips === 1), P.data.summary.all.missingSlips);
 
     // 7. Test Mode switch
     check('settings opens', await go('#settings', 'Settings'));
@@ -243,7 +244,7 @@
     check('add opens a form with the next Employee ID filled in', await until(() => $('#staff-dialog').open && $('#sf-id') && $('#sf-id').value === P.data.staffNextId && P.data.staffNextId === '001'));
     $('#sf-name').value = 'Someone New';
     $('#staff-save').click();
-    check('the store, email and Hourly Rate are required', await until(() => !$('#staff-error').hidden && /the store, the email, the Hourly Rate/.test($('#staff-error').textContent)));
+    check('the store and Hourly Rate are required; the email is optional', await until(() => !$('#staff-error').hidden && /the store, the Hourly Rate/.test($('#staff-error').textContent) && !/email/.test($('#staff-error').textContent)));
     $('#sf-store').value = 'SS18'; $('#sf-email').value = 'someone.new@example.com'; $('#sf-rate').value = '9.50';
     $('#sf-id').value = 'MCH-024';
     $('#staff-save').click();
@@ -251,7 +252,7 @@
     $('#sf-id').value = 'MCH-040';
     $('#staff-save').click();
     check('a new person is added and listed', await until(() => !$('#staff-dialog').open && P.data.staff.some((s) => s.id === 'MCH-040')));
-    check('active people without a Jibble ID are flagged', /active people have no Jibble ID/.test($('#view').textContent) && $$('.badge').some((b) => b.textContent === 'No Jibble ID'));
+    check('active people without a Jibble ID are flagged', /people have no Jibble ID/.test($('#view').textContent) && $$('.badge').some((b) => b.textContent === 'No Jibble ID'));
     $('[data-staff-edit="MCH-028"]').click();
     check('the Jibble ID box offers Jibble\'s unlinked names for that store', await until(() => $('#staff-dialog').open && $$('#sf-ioi-list option').length === 1 &&
       $$('#sf-ioi-list option').some((o) => o.value === 'IOI-0301' && /Adlina H/.test(o.textContent)) && $$('#sf-ss18-list option').length === 0));
@@ -305,6 +306,64 @@
     // The month's steps are readable (a loading-bar style once squashed them to a thin line).
     check('the month\'s steps show their names and open their pages', $$('ol.progress li').length === 9 &&
       $('ol.progress').getBoundingClientRect().height > 20 && !!$('ol.progress a[href="#slips"]'), $('ol.progress') && $('ol.progress').getBoundingClientRect().height);
+    // 8c3. Needs fixing (owner, 2026-11-03): who has no pay yet, why, and a fix for each
+    check('Overview says how many people need fixing', await go('#overview', 'Overview') && /people need fixing/.test($('#view').textContent));
+    $('[data-goto-fix]').click();
+    check('it leads to the Needs fixing list on Payroll Management', await until(() => !!$('#needs-fixing') && $('#view h1').textContent === 'Payroll Management'));
+    const fxNames = () => $$('.fx-row .fx-who strong').map((x) => x.textContent);
+    check('the unlinked person is first, then the others, each with the reason', fxNames()[0] === 'Nadia Syifa' && fxNames().includes('Hafiz Rahman bin Yusof') &&
+      fxNames().includes('Muhammad Aiman Hakim bin Rosli') && /No Hourly Rate/.test($('#needs-fixing').textContent) && /without a clock-out/.test($('#needs-fixing').textContent), fxNames().join());
+    check('the likely person is offered as a question with a first-name warning; nothing is written yet', /Is this the same person\?/.test($$('.fx-row')[0].textContent) &&
+      /Nadia Nursyifaa binti Mohd Nizam/.test($$('.fx-row')[0].textContent) && /Same first name only/.test($$('.fx-row')[0].textContent) && !!person('name:nadia syifa'));
+
+    // The Staff Directory warns about the same gaps, and can show just those people.
+    check('Staff Directory opens for the warnings', await go('#staff', 'Staff Directory'));
+    check('it warns about no email and no hourly rate', /1 person has no email/.test($('#view').textContent) && /1 person has no hourly rate/.test($('#view').textContent), $('.notice') && $('.notice').textContent);
+    $('[data-seg="staff-issue"][data-value="noemail"]').click();
+    check('"Show them" lists just that person', await until(() => $$('table.log tbody tr').length === 1 && /Muhammad Aiman/.test($('table.log tbody').textContent)));
+    $('[data-seg="staff-issue"][data-value="all"]').click();
+    await until(() => $$('table.log tbody tr').length > 5);
+
+    // The Send Center lets an email be added where a person is held for not having one.
+    check('Send Center opens', await go('#send', 'Send Center'));
+    check('someone with no email is held, with a box to add it right there', !!$('#fx-email-MCH-009') && /Send Center/.test($('#view h1').textContent));
+    check('Payroll opens again', await go('#payroll', 'Payroll Management'));
+
+    // "None of these": add them as new staff, with the name filled in.
+    $('[data-fx-addnew="name:nadia syifa"]').click();
+    check('"add as new staff" opens the form with their name and store filled in', await until(() => $('#staff-dialog').open && $('#sf-name').value === 'Nadia Syifa' && $('#sf-store').value === 'IOI'));
+    $('#staff-dialog').close();
+
+    // Linking: asked first, and only on yes.
+    $('[data-fx-link^="name:nadia syifa|"]').click();
+    check('"Is this the right person?" shows both names and asks first', await until(() => $('#confirm-dialog').open && /Is this the right person/.test($('#confirm-title').textContent) &&
+      /Nadia Syifa/.test($('#confirm-body').textContent) && /Nadia Nursyifaa binti Mohd Nizam/.test($('#confirm-body').textContent) && /Only the first name is the same/.test($('#confirm-body').textContent)));
+    $('#confirm-dialog').close();
+    check('no: nothing changes', await until(() => !$('#confirm-dialog').open) && !!person('name:nadia syifa') && !person('MCH-031'));
+    $('[data-fx-link^="name:nadia syifa|"]').click();
+    await until(() => $('#confirm-dialog').open);
+    $('#confirm-go').click();
+    check('yes: linked to the Staff Directory person, wages worked out (56 h × RM9.50), their Jibble ID saved', await until(() => !!person('MCH-031') && !person('name:nadia syifa') &&
+      person('MCH-031').total === 'RM 532.00' && P.data.staff.find((s) => s.id === 'MCH-031').ioi === 'IOI-0399'), person('MCH-031') && person('MCH-031').total);
+    check('they are off the Needs fixing list', await until(() => !fxNames().includes('Nadia Syifa') && !fxNames().includes('Nadia Nursyifaa binti Mohd Nizam')));
+
+    // A missing rate typed right in the list.
+    input($('#fx-rate-MCH-017'), 'ten');
+    $('[data-fx-rate="MCH-017"]').click();
+    check('a bad rate is refused with a message', await until(() => !!$('.toast, [role="status"]') && /amount like 10 or 10\.50/.test(document.body.textContent)));
+    input($('#fx-rate-MCH-017'), '11');
+    $('[data-fx-rate="MCH-017"]').click();
+    check('a typed rate saves to the Staff Directory and works out the wages (152 h × RM11)', await until(() => person('MCH-017').wages === 'RM 1,672.00' && !fxNames().includes('Hafiz Rahman bin Yusof') &&
+      P.data.staff.find((s) => s.id === 'MCH-017').rate === '11'), person('MCH-017').wages);
+
+    // An email typed for someone who has none.
+    input($('#fx-email-MCH-009'), 'not an email');
+    $('[data-fx-email="MCH-009"]').click();
+    check('a bad email is refused', await until(() => /full email address/.test(document.body.textContent)) && P.data.staff.find((s) => s.id === 'MCH-009').email === '');
+    input($('#fx-email-MCH-009'), 'aiman.new@example.com');
+    $('[data-fx-email="MCH-009"]').click();
+    check('an email is saved to the Staff Directory, and only the clock-out problem is left for them', await until(() => P.data.staff.find((s) => s.id === 'MCH-009').email === 'aiman.new@example.com' &&
+      !!$('#needs-fixing') && !/No email address/.test($('#needs-fixing').textContent) && /without a clock-out/.test($('#needs-fixing').textContent)));
     check('back to the Staff Directory', await go('#staff', 'Staff Directory'));
     $('[data-staff-edit="MCH-001"]').click();
     await until(() => $('#staff-dialog').open);
@@ -354,6 +413,22 @@
     await until(() => $('#confirm-dialog').open);
     $('#confirm-dialog').close();
     check('filling November again needs "replace"', await go('#checks', 'Jibble & Documents') && (change($('#ms-month'), '2026-11'), await until(() => !!$('#ms-replace'))));
+
+    // 8e2. Update a month from Jibble, keeping what was typed (owner, 2026-11-03)
+    check('the Jibble page offers to update November, keeping what was typed', /Update November 2026 from Jibble/.test($('#view').textContent) && /keeps what you typed/.test($('#view').textContent));
+    $('[data-action="refill-plan"]').click();
+    check('"Check what would change" lists everyone, hours before and after, and changes nothing', await until(() => !!P.state.refill.plan && P.state.refill.plan.people.length >= 11) &&
+      P.state.refill.plan.blockers.length === 0 && !$('[data-action="refill-go"]').disabled && /Hours from Jibble/.test($('#view').textContent));
+    $('[data-action="refill-go"]').click();
+    check('updating asks for the word UPDATE', await until(() => $('#confirm-dialog').open && /Type UPDATE/.test($('#confirm-body').textContent)));
+    input($('#confirm-word'), 'UPDATE');
+    $('#confirm-go').click();
+    check('updated: the month reloads, the preview resets and the message says what to do', await until(() => P.state.refill.plan === null && !P.state.loading && !!P.state.toast && /Updated from Jibble/.test(P.state.toast.text), 6000));
+    await P.load('October 2026', { full: true });
+    check('October has people marked Paid, so it cannot be updated, and the page says why', await go('#checks', 'Jibble & Documents') && ($('[data-action="refill-plan"]').click(), await until(() => !!P.state.refill.plan)) &&
+      P.state.refill.plan.blockers.length === 1 && /marked Paid/.test($('#view').textContent) && $('[data-action="refill-go"]').disabled);
+    await P.load('November 2026', { full: true });
+    check('back on November', await go('#checks', 'Jibble & Documents'));
 
     // 8f. Tools: the spreadsheet's menus
     check('Tools opens', await go('#tools', 'Tools'));
