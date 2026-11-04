@@ -63,6 +63,27 @@ window.DashboardPreview = (function () {
   ];
   const CLAIM_TYPES_IN_SHEET = ['Transport', 'Parking', 'Meal', 'Other'];
 
+  // The Monthly Summary (invented numbers): finished months only, SS18 / IOI / OTHER. Made when "Update now" is pressed.
+  const SUMMARY_ROWS = [
+    { month: 'August 2026', store: 'SS18', hours: 812.5, rate: 9.62, wages: 7816.25, notes: '' },
+    { month: 'August 2026', store: 'IOI', hours: 604, rate: 9.8, wages: 5919.2, notes: '' },
+    { month: 'August 2026', store: 'OTHER', hours: 0, rate: null, wages: 0, notes: '' },
+    { month: 'August 2026', store: 'Total', hours: 1416.5, rate: 9.7, wages: 13735.45, notes: '', total: true },
+    { month: 'September 2026', store: 'SS18', hours: 790.25, rate: 9.7, wages: 7665.43, notes: 'Siti Nurhaliza binti Omar worked at both stores: split by Jibble hours (60.00 SS18 / 20.00 IOI).' },
+    { month: 'September 2026', store: 'IOI', hours: 640.5, rate: 9.91, wages: 6347.36, notes: '1 person has hours but no wages yet (no Hourly Rate): Rina Kaur. Their hours are counted; the average rate uses only people with wages.' },
+    { month: 'September 2026', store: 'OTHER', hours: 12, rate: 8, wages: 96, notes: 'In OTHER: Kevin Ong Jun Hao (store KL).' },
+    { month: 'September 2026', store: 'Total', hours: 1442.75, rate: 9.82, wages: 14108.79, notes: '', total: true },
+    { month: 'Year 2026', store: 'SS18', hours: 1602.75, rate: 9.66, wages: 15481.68, notes: '', year: true },
+    { month: 'Year 2026', store: 'IOI', hours: 1244.5, rate: 9.86, wages: 12266.56, notes: '', year: true },
+    { month: 'Year 2026', store: 'OTHER', hours: 12, rate: 8, wages: 96, notes: '', year: true },
+    { month: 'Year 2026', store: 'Total', hours: 2859.25, rate: 9.76, wages: 27844.24, notes: '2 finished months (August to September).', total: true, year: true }
+  ];
+  let summaryMade = false;
+  const summaryView = () => (summaryMade
+    ? { exists: true, handMade: false, rows: clone(SUMMARY_ROWS).map((r) => Object.assign({ total: false, year: false }, r)),
+        updated: 'Last updated: 08/11/2026 08:03 (preview)   ·   Wages = hours × hourly rate. Claims, incentives and commission are not included.', message: '' }
+    : { exists: false, handMade: false, rows: [], updated: '', message: 'The Monthly Summary has not been made yet. Press Update now.' });
+
   let testMode = true;
 
   // The Configuration tab (invented values). Same labels as Payout Automation's CONFIG_KEYS_.
@@ -648,6 +669,16 @@ window.DashboardPreview = (function () {
         if (d) links.push({ store: u.store, jibbleName: u.jibbleName, jibbleId: u.jibbleId, name: d.name, employeeId: d.id, exact: false });
       });
       return { month: args.month, links, rates: [], from: '', keys: links.map((l) => 'link|' + l.store + '|' + l.employeeId + '|' + l.jibbleId) };
+    },
+
+    getMonthlySummary() {
+      return summaryView();
+    },
+
+    updateMonthlySummary(args) {
+      if (args.confirm !== true) fail('Confirm the update first.');
+      summaryMade = true;
+      return { message: 'Preview only: the Monthly Summary was rebuilt in this preview. The spreadsheet was not changed.', summary: summaryView() };
     },
 
     planJibbleIds(args) {

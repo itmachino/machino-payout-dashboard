@@ -541,6 +541,20 @@
     await reload;
     check('… and both go away when the data arrives', !$('.loading-card') && await until(() => $('#busy-bar').hidden));
 
+    // 9b. Monthly Summary (owner, 2026-11-04): not made yet, then "Update now" asks first and shows the table
+    check('Monthly Summary opens and says it is not made yet', await go('#summary', 'Monthly Summary') && await until(() => /Not made yet/.test($('#view').textContent)));
+    $('[data-action="summary-update"]').click();
+    check('Update now asks first and says only that tab changes', await until(() => $('#confirm-dialog').open && /Nothing else changes, and nothing is sent/.test($('#confirm-dialog').textContent)));
+    $('#confirm-dialog').close();
+    check('no: nothing is made', await until(() => !$('#confirm-dialog').open) && /Not made yet/.test($('#view').textContent));
+    $('[data-action="summary-update"]').click();
+    await until(() => $('#confirm-dialog').open);
+    $('#confirm-go').click();
+    check('the table shows each finished month by store with a Total, then the year, with hours, average rate and wages', await until(() => $$('.log tbody tr').length === 12 && /Year 2026/.test($('#view').textContent) && /27,844\.24/.test($('#view').textContent) && /September 2026/.test($('#view').textContent) && /RM 9\.91/.test($('#view').textContent) && /7,816\.25/.test($('#view').textContent)));
+    check('the notes, and that it updates by itself on the 8th, are shown; nothing about turning it on or off', /worked at both stores: split by Jibble hours/.test($('#view').textContent) && /In OTHER: /.test($('#view').textContent) &&
+      /on the 8th of every month/.test($('#view').textContent) && !/on\/off/.test($('#view').textContent));
+    check('Tools lists it too', await go('#tools', 'Tools') && /Update Monthly Summary/.test($('#view').textContent));
+
     // 10. History and month switch
     check('history opens', await go('#history', 'History'));
     $('[data-seg="history-mode"][data-value="LIVE"]').click();

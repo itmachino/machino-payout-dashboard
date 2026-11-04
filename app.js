@@ -157,6 +157,7 @@
     add: null,                                         // the Add person window
     refill: { plan: null, loading: false, error: null },   // update a month from Jibble, keeping what was typed
     jids: { open: false, plan: null, loading: false, error: null, picks: {} },   // fill Jibble IDs in the Staff Directory
+    summary: { data: null, loaded: false, loading: false, updating: false, error: null },   // the Monthly Summary page
     control: { period: null, rows: null, loading: false, error: null, status: 'all', store: 'all' },
     verify: null,
     menu: false,
@@ -1980,6 +1981,64 @@
     } catch (err) { toast('Not saved: ' + errText(err), 'error'); }
   }
 
+  /* ---------- Monthly Summary (owner, 2026-11-04, V2-ADR-037; the menu's More → Update Monthly Summary) ---------- */
+  const fmt2 = (n) => Number(n).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  async function loadSummary() {
+    const s = state.summary;
+    if (s.loading) return;
+    s.loading = true; s.error = null;
+    try { s.data = await call('getMonthlySummary', {}); s.loaded = true; } catch (err) { s.error = errText(err); }
+    s.loading = false;
+    if (currentRoute() === 'summary') render();
+  }
+  function summaryPage() {
+    const s = state.summary;
+    if (!s.loaded && !s.loading && !s.error) setTimeout(loadSummary, 0);
+    const d = s.data;
+    let lastMonth = '';
+    const cell = (v, f) => v == null ? '<span class="muted">—</span>' : f(v);
+    return `
+      <header class="page-head">
+        <div class="title-block"><h1>Monthly Summary</h1><span class="small muted">Hours, average rate and wages for each finished month, by store. Wages only: no claims, incentives or commission.</span></div>
+        <div class="tools">
+          <button type="button" class="icon-btn" data-action="summary-refresh" aria-label="Read the Monthly Summary again"${s.loading ? ' disabled' : ''}>${s.loading ? '<span class="spinner sm" aria-hidden="true"></span>' : icon.refresh}</button>
+          <button type="button" class="link-btn" data-sheet="Monthly Summary">Open the tab ${icon.ext}</button>
+          <button type="button" class="btn btn-primary" data-action="summary-update"${s.updating ? ' disabled' : ''}>${s.updating ? '<span class="spinner sm"></span>Updating…' : 'Update now'}</button>
+        </div>
+      </header>
+      ${toastHTML()}
+      <section class="card raised" aria-labelledby="ms-sum-title">
+        <div class="card-head"><div><h2 id="ms-sum-title">Finished months</h2>
+          <span class="small muted">${d && d.exists ? esc(d.updated) : 'Made from the month tabs of the spreadsheet. The current month is added once it has finished.'}</span></div></div>
+        ${s.error ? `<div class="card-body"><div class="notice error">${icon.alert}<span class="grow">Could not read the Monthly Summary: ${esc(s.error)}</span><button type="button" class="btn btn-secondary btn-sm" data-action="summary-refresh">Try again</button></div></div>`
+          : !d ? '<div class="loading"><span class="spinner" aria-hidden="true"></span>Reading the Monthly Summary tab…</div>'
+          : !d.exists ? `<div class="empty"><h3>${d.handMade ? 'A tab with this name was made by hand' : 'Not made yet'}</h3><span class="muted small">${esc(d.message)}</span></div>`
+          : `<div class="table-wrap"><table class="log">
+            <thead><tr><th scope="col">Month</th><th scope="col">Store</th><th scope="col" class="right">Hours</th><th scope="col" class="right">Average rate</th><th scope="col" class="right">Wages</th><th scope="col">Notes</th></tr></thead>
+            <tbody>${d.rows.map((r) => {
+              const first = r.month !== lastMonth; lastMonth = r.month;
+              const look = [first ? 'border-top:2px solid #C9B8A3' : '', r.total ? 'font-weight:700;background:' + (r.year ? '#E3D8C8' : '#F1E5D8') : r.year ? 'background:#FBF6EF' : ''].filter(Boolean).join(';');
+              return `<tr${look ? ' style="' + look + '"' : ''}>
+              <th scope="row">${first ? esc(r.month) : '<span class="sr-only">' + esc(r.month) + '</span>'}</th>
+              <td>${r.total ? '<strong>Total</strong>' : storeBadges([r.store])}</td>
+              <td class="right num">${cell(r.hours, fmt2)}</td><td class="right num" style="white-space:nowrap">${cell(r.rate, (v) => 'RM ' + fmt2(v))}</td><td class="right num" style="white-space:nowrap">${cell(r.wages, (v) => 'RM ' + fmt2(v))}</td>
+              <td class="small" style="max-width:380px">${r.notes ? esc(r.notes) : '<span class="muted">—</span>'}</td></tr>`; }).join('')}</tbody></table></div>`}
+        <p class="small muted" style="margin:0;padding:0 24px 20px;line-height:1.5">It comes from each month tab as the sheet has it. Someone who worked at both stores is shared between them by Jibble’s hours (the Notes say so). Each month has a Total of all three, and each year a block with its finished months added up. It updates by itself on the 8th of every month at about 8 am. Update now only rewrites the Monthly Summary tab.</p>
+      </section>`;
+  }
+  async function summaryUpdate() {
+    const s = state.summary;
+    const ok = await confirmBox('Update the Monthly Summary?', '<p style="margin:0;line-height:1.5">This rebuilds the <strong>Monthly Summary</strong> tab from the finished month tabs. Nothing else changes, and nothing is sent.</p>', 'Update now');
+    if (!ok) return;
+    s.updating = true; render();
+    try {
+      const res = await call('updateMonthlySummary', { confirm: true });
+      s.data = res.summary; s.loaded = true; s.error = null;
+      toast(res.message, 'ok');
+    } catch (err) { toast('Not updated: ' + errText(err), 'error'); }
+    s.updating = false; render();
+  }
+
   /* ---------- Add person: Staff Directory, or this month's payroll only (owner, 2026-11-03) ---------- */
   const monthIso = (label) => label.split(' ')[1] + '-' + String(MONTHS.indexOf(label.split(' ')[0]) + 1).padStart(2, '0');
   function openAdd() {
@@ -2202,6 +2261,7 @@
               <strong>${tl.check.canPrepare ? 'Ready to prepare ' : 'Not ready to prepare '}${esc(tl.check.period)}</strong>
               ${tl.check.findings.length ? `<ul class="plain-list">${tl.check.findings.map((x) => `<li style="display:flex;gap:10px;align-items:flex-start;padding:8px 0"><span class="badge ${(LEVEL_VIEW[x.level] || LEVEL_VIEW.warn)[0]}">${(LEVEL_VIEW[x.level] || LEVEL_VIEW.warn)[1]}</span><div><strong class="small">${esc(x.title)}</strong>${x.detail ? `<div class="small muted">${esc(x.detail)}</div>` : ''}</div></li>`).join('')}</ul>` : '<span class="small muted">No problems found.</span>'}
               <span class="small muted">${esc(tl.check.note)}</span></div></li>` : ''}
+          ${row('Update Monthly Summary', 'Rebuilds the Monthly Summary tab: hours, average rate and wages for each finished month, by store, with totals. Only that tab changes. It also updates by itself on the 8th of every month.', '<a class="btn btn-secondary btn-sm" href="#summary">Open Monthly Summary</a>')}
           ${row('Fill Jibble IDs in Staff Directory', 'Everyone with hours in Jibble who has no Jibble ID in the Staff Directory yet, with the person whose name fits. You check the list before anything is saved.',
             '<button type="button" class="btn btn-secondary btn-sm" data-action="jids-plan">Fill Jibble IDs</button>')}
           ${row('Setup &amp; Repair: month folders', f.slip && f.calc ? 'This month’s Payment Slip and Payment Calculation folders exist.' : 'A folder for ' + esc(f.name || DATA.period) + ' is missing.',
@@ -2299,8 +2359,8 @@
     } catch (err) { toast('Not deleted: ' + errText(err), 'error'); }
   }
 
-  const ROUTES = { overview, payroll, slips, checks, settings, send, history, staff: staffPage, tools: toolsPage, control: controlPage };
-  const TITLES = { overview: 'This month', payroll: 'Payroll Management', slips: 'Payment Slips', checks: 'Jibble & Documents', settings: 'Settings', send: 'Send Center', history: 'History', staff: 'Staff Directory', tools: 'Tools', control: 'Payout Control' };
+  const ROUTES = { overview, payroll, slips, checks, settings, send, history, staff: staffPage, tools: toolsPage, control: controlPage, summary: summaryPage };
+  const TITLES = { overview: 'This month', payroll: 'Payroll Management', slips: 'Payment Slips', checks: 'Jibble & Documents', settings: 'Settings', send: 'Send Center', history: 'History', staff: 'Staff Directory', tools: 'Tools', control: 'Payout Control', summary: 'Monthly Summary' };
   const view = document.getElementById('view');
   function currentRoute() {
     const r = (location.hash || '#overview').slice(1);
@@ -2554,6 +2614,8 @@
     if (a === 'drive-load') loadDriveSlips();
     if (a === 'drive-rename') renameDriveSlips();
     if (a === 'staff-add') openStaff(null);
+    if (a === 'summary-update') summaryUpdate();
+    if (a === 'summary-refresh') { state.summary.error = null; state.summary.data = null; state.summary.loaded = false; loadSummary(); render(); }
     if (a === 'jids-plan') jidsPlan();
     if (a === 'jids-save') jidsSave();
     if (a === 'jids-close') { state.jids = { open: false, plan: null, loading: false, error: null, picks: {} }; render(); }
