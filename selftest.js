@@ -217,6 +217,23 @@
     try { window.DashboardPreview.linkJibblePerson({ store: 'IOI', jibbleId: 'IOI-0301', employeeId: 'MCH-014' }); } catch (e) { refused = true; }
     check('never overwrites an existing Jibble ID', refused);
 
+    // 8a. Fill Jibble IDs in the Staff Directory (owner, 2026-11-04): the list, the name that fits chosen, asked first.
+    // Answered "no" here, because later steps use the demo's last unlinked Jibble person; the save is checked on the preview.
+    check('Staff Directory opens for Fill Jibble IDs', await go('#staff', 'Staff Directory'));
+    $('[data-action="jids-plan"]').click();
+    check('the list shows the Jibble person who is not linked, with the person whose name fits chosen', await until(() => !!$('[data-jid="IOI|IOI-0301"]') && $('[data-jid="IOI|IOI-0301"]').value === 'MCH-028'));
+    check('nobody who already has an IOI Jibble ID can be chosen', !$('[data-jid="IOI|IOI-0301"] option[value="MCH-014"]'));
+    $('[data-action="jids-save"]').click();
+    check('it asks first, naming both', await until(() => $('#confirm-dialog').open && /Adlina H/.test($('#confirm-dialog').textContent) && /Nur Adlina binti Hassan/.test($('#confirm-dialog').textContent)));
+    $('#confirm-dialog').close();
+    check('no: nothing is saved', await until(() => !$('#confirm-dialog').open) && P.data.staff.find((s) => s.id === 'MCH-028').ioi === '');
+    refused = false;
+    try { window.DashboardPreview.saveJibbleIds({ confirm: true, picks: [{ store: 'IOI', jibbleId: 'IOI-0301', employeeId: 'MCH-014' }] }); } catch (e) { refused = true; }
+    check('saving never overwrites an existing Jibble ID', refused && P.data.staff.find((s) => s.id === 'MCH-014').ioi === 'IOI-0204');
+    $('[data-action="jids-close"]').click();
+    check('the list closes', await until(() => !$('[data-jid]')));
+
+
     // 8b. Staff Directory: see and edit one person
     check('Staff Directory opens', await go('#staff', 'Staff Directory'));
     check('everyone active is listed', $$('.log tbody tr').length === P.data.staff.filter((s) => s.active).length);

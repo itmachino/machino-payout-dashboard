@@ -650,6 +650,39 @@ window.DashboardPreview = (function () {
       return { month: args.month, links, rates: [], from: '', keys: links.map((l) => 'link|' + l.store + '|' + l.employeeId + '|' + l.jibbleId) };
     },
 
+    planJibbleIds(args) {
+      // Invented stand-in for the real matching: a name that fits is chosen (first word in the Staff Directory name); others get hints.
+      const first = (n) => n.split(' ')[0].replace(/\W/g, '');
+      const col = (store) => (store === 'SS18' ? 'ss18' : 'ioi');
+      const people = month('October 2026').unmatched.map((u) => {
+        const fit = DIRECTORY.find((x) => x.id && x.active !== false && x.name.split(' ').includes(first(u.jibbleName)) && !x[col(u.store)]);
+        return { store: u.store, jibbleId: u.jibbleId, jibbleName: u.jibbleName, employeeId: fit ? fit.id : '', exact: false, hints: [] };
+      });
+      const choices = {};
+      ['SS18', 'IOI'].forEach((s) => { choices[s] = DIRECTORY.filter((x) => x.id && x.active !== false && !x[col(s)]).map((x) => ({ id: x.id, name: x.name })); });
+      return { period: args.period, upTo: '23/10/2026', people, choices, linked: DIRECTORY.filter((x) => x.ss18 || x.ioi).length };
+    },
+
+    saveJibbleIds(args) {
+      if (args.confirm !== true) fail('Confirm the list first.');
+      const m = month('October 2026');
+      const picks = args.picks || [];
+      if (!picks.length) fail('Choose at least one person. Nothing was changed.');
+      const done = picks.map((p) => {
+        const u = m.unmatched.find((x) => x.jibbleId === p.jibbleId && x.store === p.store);
+        const d = dir(p.employeeId);
+        const c = p.store === 'SS18' ? 'ss18' : 'ioi';
+        if (!u) fail('A Jibble person on your list is not waiting for a Jibble ID any more. Check again. Nothing was changed.');
+        if (!d) fail('The Employee ID chosen for ' + u.jibbleName + ' is not in the Staff Directory exactly once. Nothing was changed.');
+        if (d[c]) fail(d.name + ' already has a ' + p.store + ' Jibble ID. Nothing was changed.');
+        return { u, d, c };
+      });
+      if (new Set(done.map((x) => x.c + x.d.id)).size !== done.length) fail('One person was chosen for two Jibble people. Choose one. Nothing was changed.');
+      done.forEach(({ u, d, c }) => { d[c] = u.jibbleId; m.unmatched = m.unmatched.filter((x) => x !== u); });
+      return { staff: DIRECTORY.map(staffView), message: done.length + ' Jibble ID' + (done.length === 1 ? '' : 's') + ' saved in this preview only: ' +
+        done.map(({ u, d }) => u.jibbleName + ' → ' + d.name).join(', ') + '. The Staff Directory was not changed.' };
+    },
+
     deleteStaff(args) {
       if (args.confirm !== 'DELETE') fail('Type DELETE to confirm.');
       const d = dir(args.employeeId);

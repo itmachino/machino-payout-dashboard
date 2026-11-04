@@ -156,6 +156,7 @@
     cfg: { editing: false, draft: null, saving: false },
     add: null,                                         // the Add person window
     refill: { plan: null, loading: false, error: null },   // update a month from Jibble, keeping what was typed
+    jids: { open: false, plan: null, loading: false, error: null, picks: {} },   // fill Jibble IDs in the Staff Directory
     control: { period: null, rows: null, loading: false, error: null, status: 'all', store: 'all' },
     verify: null,
     menu: false,
@@ -574,7 +575,8 @@
             <tbody>${p.people.map((x) => `<tr><th scope="row"><strong>${esc(x.name)}</strong>${x.isNew ? ' <span class="badge b-ready">New</span>' : ''}${x.employeeId ? '' : ' <span class="badge b-attention">Not linked</span>'}</th>
               <td class="right num">${x.isNew ? '—' : esc(x.oldHours)}</td><td class="right num"${!x.isNew && x.oldHours !== x.newHours ? ' style="font-weight:700"' : ''}>${esc(x.newHours)}</td>
               <td class="small">${typedText(x.typed) ? 'Kept: ' + esc(typedText(x.typed)) : '<span class="muted">—</span>'}</td></tr>`).join('')}</tbody></table></div>
-          ${p.removed.length ? `<div class="notice">${icon.alert}<span class="grow"><strong>Not in Jibble, so they will be removed from this month:</strong><span>${p.removed.map((x) => esc(x.name)).join(', ')}</span><span>Add them again afterwards with Add person → Someone to this month only.</span></span></div>` : ''}
+          ${(p.kept || []).length ? `<div class="notice">${icon.alert}<span class="grow"><strong>Not in Jibble, so they are kept exactly as they are (hours and all):</strong><span>${p.kept.map((x) => esc(x.name)).join(', ')}</span>${p.people.some((x) => x.isNew) ? '<span>If one of them is the same person as someone new from Jibble, remove their typed-in entry afterwards (their panel → Remove from this month) and link the Jibble one.</span>' : ''}</span></div>` : ''}
+          ${p.removed.length ? `<div class="notice">${icon.alert}<span class="grow"><strong>Not in Jibble, so they will be removed from this month:</strong><span>${p.removed.map((x) => esc(x.name)).join(', ')}</span></span></div>` : ''}
           <div><button type="button" class="btn btn-primary" data-action="refill-go"${p.blockers.length ? ' disabled' : ''}>Update ${esc(DATA.period)} from Jibble</button>
             <span class="small muted" style="margin-left:10px">Hours up to ${esc(p.upTo)}. Then run Prepare payouts again.</span></div>` : ''}`}
       </div></section>`;
@@ -592,6 +594,7 @@
         <li>Hours come from Jibble again, for ${r.plan.people.length} people.</li>
         <li>Claims, incentives, commission and payment details you typed are kept.</li>
         <li>Notes are Jibble’s again, and anyone marked Paid stops this from running.</li>
+        ${(r.plan.kept || []).length ? `<li><strong>Kept as they are (not in Jibble):</strong> ${r.plan.kept.map((x) => esc(x.name)).join(', ')}</li>` : ''}
         ${r.plan.removed.length ? `<li><strong>Removed:</strong> ${r.plan.removed.map((x) => esc(x.name)).join(', ')}</li>` : ''}</ul>`, 'Update', !!r.plan.removed.length);
     if (!ok) return;
     try {
@@ -1887,9 +1890,10 @@
     return `
       <header class="page-head">
         <div class="title-block"><h1>Staff Directory</h1><span class="small muted">The Staff Directory tab of Retail Payout 2026. Changes are written there.</span></div>
-        <div class="tools">${refreshBtn()}<button type="button" class="btn btn-primary" data-action="staff-add">${icon.plus || '+'} Add person</button></div>
+        <div class="tools">${refreshBtn()}<button type="button" class="btn btn-secondary" data-action="jids-plan"${state.jids.loading ? ' disabled' : ''}>${state.jids.loading ? '<span class="spinner sm"></span>Checking Jibble…' : 'Fill Jibble IDs'}</button><button type="button" class="btn btn-primary" data-action="staff-add">${icon.plus || '+'} Add person</button></div>
       </header>
       ${toastHTML()}
+      ${jibbleIdsCard()}
       ${staffBanner()}
       <div class="card card-body" style="display:flex;flex-wrap:wrap;align-items:flex-end;gap:16px">
         <label class="field" style="flex:1 1 240px">Search<input class="input" type="search" id="staff-q" value="${esc(st.q)}" placeholder="Name, Employee ID or email"></label>
@@ -1913,6 +1917,69 @@
         <p class="small muted" style="margin:0;padding:0 24px 20px;line-height:1.5">An Employee ID cannot be changed once it is saved: it is how the payout finds each person. Someone who has left can be marked not active, or deleted when they are no longer on the current month's payroll.</p>
       </section>`;
   }
+  /* ---------- Fill Jibble IDs in the Staff Directory (owner, 2026-11-04; the menu's More → Fill Jibble IDs in Staff Directory) ---------- */
+  function jibbleIdsCard() {
+    const j = state.jids;
+    if (!j.open) return '';
+    const p = j.plan;
+    const chosen = p ? p.people.filter((x) => j.picks[x.store + '|' + x.jibbleId]) : [];
+    const option = (c, sel) => `<option value="${esc(c.id)}"${sel === c.id ? ' selected' : ''}>${esc(c.name)} (${esc(c.id)})</option>`;
+    return `<section class="card raised" aria-labelledby="jid-title">
+      <div class="card-head"><div><h2 id="jid-title">Fill Jibble IDs in the Staff Directory</h2>
+        <span class="small muted">Everyone with hours in Jibble for ${esc(DATA.period)} who has no Jibble ID in the Staff Directory yet. Where a name fits one person, they are chosen for you: check them. Only empty Jibble ID cells are filled; nothing else changes.</span></div>
+        <button type="button" class="btn btn-secondary btn-sm" data-action="jids-close">Close</button></div>
+      <div class="card-body" style="display:flex;flex-direction:column;gap:14px">
+        ${j.error ? `<div class="notice error">${icon.alert}<span class="grow">${esc(j.error)}</span></div>` : ''}
+        ${j.loading ? '<span class="small muted"><span class="spinner sm"></span> Checking Jibble…</span>' : ''}
+        ${p && !p.people.length ? `<div class="notice">${icon.check || ''}<span class="grow">Everyone with hours in Jibble up to ${esc(p.upTo)} already has their Jibble ID (${p.linked}). Someone who has not clocked in this month yet is not listed.</span></div>` : ''}
+        ${p && p.people.length ? `
+          <div class="table-wrap"><table class="log"><thead><tr><th scope="col">Name in Jibble</th><th scope="col">Store</th><th scope="col">Staff Directory person</th></tr></thead>
+            <tbody>${p.people.map((x) => {
+              const k = x.store + '|' + x.jibbleId;
+              const sel = j.picks[k] || '';
+              const hintIds = x.hints.map((h) => h.id);
+              return `<tr><th scope="row"><strong>${esc(x.jibbleName)}</strong><div class="small muted">${esc(x.jibbleId)}</div></th>
+                <td>${storeBadges([x.store])}</td>
+                <td><select class="select" data-jid="${esc(k)}" aria-label="Staff Directory person for ${esc(x.jibbleName)}">
+                  <option value="">— Skip —</option>
+                  ${x.hints.length ? `<optgroup label="Could be">${x.hints.map((h) => option(h, sel)).join('')}</optgroup>` : ''}
+                  <optgroup label="Everyone without a ${esc(x.store)} Jibble ID">${(p.choices[x.store] || []).filter((c) => !hintIds.includes(c.id)).map((c) => option(c, sel)).join('')}</optgroup>
+                </select>
+                ${x.employeeId && sel === x.employeeId ? `<div class="small ${x.exact ? 'muted' : ''}">${x.exact ? 'Same name' : '<strong>Name not exactly the same: check it</strong>'}</div>` : ''}</td></tr>`;
+            }).join('')}</tbody></table></div>
+          <div><button type="button" class="btn btn-primary" data-action="jids-save"${chosen.length ? '' : ' disabled'}>Save ${chosen.length} Jibble ID${chosen.length === 1 ? '' : 's'}</button>
+            <span class="small muted" style="margin-left:10px">Shown first; you confirm the list. Then use Get Hours from Jibble to bring in their hours.</span></div>` : ''}
+      </div></section>`;
+  }
+  async function jidsPlan() {
+    const j = state.jids;
+    if (location.hash !== '#staff') location.hash = '#staff';
+    Object.assign(j, { open: true, loading: true, error: null, plan: null, picks: {} }); render();
+    try {
+      j.plan = await call('planJibbleIds', { period: DATA.period });
+      j.plan.people.forEach((x) => { if (x.employeeId) j.picks[x.store + '|' + x.jibbleId] = x.employeeId; });
+    } catch (err) { j.error = errText(err); }
+    j.loading = false; render();
+  }
+  async function jidsSave() {
+    const j = state.jids;
+    const nameOf = (store, id) => ((j.plan.choices[store] || []).find((c) => c.id === id) || {}).name || id;
+    const picks = j.plan.people.filter((x) => j.picks[x.store + '|' + x.jibbleId])
+      .map((x) => ({ store: x.store, jibbleId: x.jibbleId, employeeId: j.picks[x.store + '|' + x.jibbleId], jibbleName: x.jibbleName }));
+    if (!picks.length) return;
+    const twice = picks.find((x, i) => picks.some((y, k) => k !== i && y.store === x.store && y.employeeId === x.employeeId));
+    if (twice) { toast(nameOf(twice.store, twice.employeeId) + ' is chosen for two Jibble people. Choose one.', 'error'); return; }
+    const ok = await confirmBox('Save ' + picks.length + ' Jibble ID' + (picks.length === 1 ? '' : 's') + '?', `<ul style="margin:0;padding-left:20px;line-height:1.7">
+        ${picks.map((x) => `<li>${esc(x.jibbleName)} (${esc(x.store)}) → <strong>${esc(nameOf(x.store, x.employeeId))}</strong></li>`).join('')}</ul>
+      <p class="small muted" style="margin:8px 0 0">Are these the right people? Only empty Jibble ID cells are filled.</p>`, 'Yes, save');
+    if (!ok) return;
+    try {
+      const res = await call('saveJibbleIds', { period: DATA.period, confirm: true, picks: picks.map(({ store, jibbleId, employeeId }) => ({ store, jibbleId, employeeId })) });
+      state.jids = { open: false, plan: null, loading: false, error: null, picks: {} };
+      await load(DATA.period, { message: res.message });
+    } catch (err) { toast('Not saved: ' + errText(err), 'error'); }
+  }
+
   /* ---------- Add person: Staff Directory, or this month's payroll only (owner, 2026-11-03) ---------- */
   const monthIso = (label) => label.split(' ')[1] + '-' + String(MONTHS.indexOf(label.split(' ')[0]) + 1).padStart(2, '0');
   function openAdd() {
@@ -2135,6 +2202,8 @@
               <strong>${tl.check.canPrepare ? 'Ready to prepare ' : 'Not ready to prepare '}${esc(tl.check.period)}</strong>
               ${tl.check.findings.length ? `<ul class="plain-list">${tl.check.findings.map((x) => `<li style="display:flex;gap:10px;align-items:flex-start;padding:8px 0"><span class="badge ${(LEVEL_VIEW[x.level] || LEVEL_VIEW.warn)[0]}">${(LEVEL_VIEW[x.level] || LEVEL_VIEW.warn)[1]}</span><div><strong class="small">${esc(x.title)}</strong>${x.detail ? `<div class="small muted">${esc(x.detail)}</div>` : ''}</div></li>`).join('')}</ul>` : '<span class="small muted">No problems found.</span>'}
               <span class="small muted">${esc(tl.check.note)}</span></div></li>` : ''}
+          ${row('Fill Jibble IDs in Staff Directory', 'Everyone with hours in Jibble who has no Jibble ID in the Staff Directory yet, with the person whose name fits. You check the list before anything is saved.',
+            '<button type="button" class="btn btn-secondary btn-sm" data-action="jids-plan">Fill Jibble IDs</button>')}
           ${row('Setup &amp; Repair: month folders', f.slip && f.calc ? 'This month’s Payment Slip and Payment Calculation folders exist.' : 'A folder for ' + esc(f.name || DATA.period) + ' is missing.',
             f.slip && f.calc ? '<span class="badge b-sent">Done</span>' : '<button type="button" class="btn btn-secondary btn-sm" data-action="create-folders">Create the folders</button>')}
           ${row('Setup &amp; Repair: fill blank Employee IDs', 'Only where the Staff Directory has exactly one person with that name. Shown first; nothing changes until you approve.',
@@ -2485,6 +2554,9 @@
     if (a === 'drive-load') loadDriveSlips();
     if (a === 'drive-rename') renameDriveSlips();
     if (a === 'staff-add') openStaff(null);
+    if (a === 'jids-plan') jidsPlan();
+    if (a === 'jids-save') jidsSave();
+    if (a === 'jids-close') { state.jids = { open: false, plan: null, loading: false, error: null, picks: {} }; render(); }
     if (a === 'refill-plan') refillPlan();
     if (a === 'refill-go') refillGo();
     if (a === 'month-setup') setUpMonth(t.closest('[data-action]'));
@@ -2568,6 +2640,7 @@
     if (t.dataset.drivePick) { const d = state.slips.drive; if (t.value) d.picks[t.dataset.drivePick] = t.value; else delete d.picks[t.dataset.drivePick]; loadDriveSlips(); }
     if (t.dataset.driveChoose) { state.slips.drive.chosen[t.dataset.driveChoose] = t.checked; render(); }
     if (t.dataset.link) { state.links[t.dataset.link] = t.value; render(); }
+    if (t.dataset.jid) { if (t.value) state.jids.picks[t.dataset.jid] = t.value; else delete state.jids.picks[t.dataset.jid]; render(); }
   });
   ['dragenter', 'dragover'].forEach((type) => view.addEventListener(type, (e) => {
     const z = e.target.closest && e.target.closest('#dropzone');
